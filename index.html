@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LMU Telemetry</title>
+  <meta name="description" content="Classifiche e tempi del gruppo su Le Mans Ultimate">
+  <meta name="theme-color" content="#0a0c11">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="stripe" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" class="brand-mark">
+      <div>
+        <div class="brand-name">LMU <b>TELEMETRY</b></div>
+        <div class="brand-sub">I tempi del gruppo</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="status" class="status">…</span>
+      <button id="refresh" class="icon-btn" title="Aggiorna" aria-label="Aggiorna">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="board" role="tab">Classifiche</button>
+    <button class="tab" data-tab="feed" role="tab">Ultime sessioni</button>
+    <button class="tab" data-tab="drivers" role="tab">Piloti</button>
+  </nav>
+
+  <main id="app">
+    <div class="loading"><div class="spinner"></div>Carico i tempi…</div>
+  </main>
+
+  <footer class="foot">
+    <span id="updated"></span>
+    <span>Dati da Le Mans Ultimate · solo giri validi</span>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="demo.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
