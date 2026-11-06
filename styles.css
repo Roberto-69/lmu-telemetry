@@ -18,9 +18,15 @@
   --silver: #c9d1df;
   --bronze: #d99159;
 
+  /* Colori di categoria (come in LMU / WEC / ELMS) */
   --hy: #e2231a;              /* Hypercar */
   --p2: #2f6fde;              /* LMP2 */
-  --gt: #f08c00;              /* LMGT3 */
+  --p2e: #19b4e6;             /* LMP2 ELMS */
+  --p3: #8e44d6;              /* LMP3 */
+  --gt: #22a85a;              /* LMGT3 */
+  --gte3: #f08c00;            /* LMGT3 ELMS */
+  --gte: #d4b000;             /* LMGTE */
+  --oth: #7d8597;             /* altre */
 
   --radius: 14px;
   --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
@@ -148,7 +154,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
 
 /* ---------- filtri ---------- */
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin: 18px 0 14px; }
-.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
 .seg button {
   border: 0; background: none; cursor: pointer; padding: 6px 12px; border-radius: 7px;
   color: var(--muted); font-weight: 700; font-size: 13px; letter-spacing: 0.04em;
@@ -156,9 +162,16 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
 }
 .seg button.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.Hypercar { background: var(--hy); }
-.dot.LMP2 { background: var(--p2); }
-.dot.LMGT3 { background: var(--gt); }
+.dot.HY, .cls-bar.HY, .badge.cls.HY { background: var(--hy); }
+.dot.P2, .cls-bar.P2, .badge.cls.P2 { background: var(--p2); }
+.dot.P2E, .cls-bar.P2E, .badge.cls.P2E { background: var(--p2e); }
+.dot.P3, .cls-bar.P3, .badge.cls.P3 { background: var(--p3); }
+.dot.GT3, .cls-bar.GT3, .badge.cls.GT3 { background: var(--gt); }
+.dot.GT3E, .cls-bar.GT3E, .badge.cls.GT3E { background: var(--gte3); }
+.dot.GTE, .cls-bar.GTE, .badge.cls.GTE { background: var(--gte); }
+.dot.OTHER, .cls-bar.OTHER, .badge.cls.OTHER { background: var(--oth); }
+.badge.cls.GT3E, .badge.cls.GTE { color: #1b1000; }
+.seg button:disabled { opacity: 0.35; cursor: default; }
 
 .switch { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
 .switch input { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--line-2); position: relative; cursor: pointer; margin: 0; }
@@ -215,9 +228,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
 .pos.p3 { color: var(--bronze); }
 .driver { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .cls-bar { width: 4px; height: 30px; border-radius: 2px; flex: none; }
-.cls-bar.Hypercar { background: var(--hy); }
-.cls-bar.LMP2 { background: var(--p2); }
-.cls-bar.LMGT3 { background: var(--gt); }
 .driver .nick { font-weight: 700; font-size: 15px; }
 .driver .car { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .time { font-family: var(--mono); font-weight: 700; font-size: 15px; }
@@ -231,9 +241,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
   background: var(--surface-2); color: var(--muted); border: 1px solid var(--line-2); vertical-align: middle;
 }
 .badge.cls { color: #fff; border: 0; }
-.badge.cls.Hypercar { background: var(--hy); }
-.badge.cls.LMP2 { background: var(--p2); }
-.badge.cls.LMGT3 { background: var(--gt); color: #1b1000; }
 .badge.pb { background: rgba(43, 213, 118, 0.14); color: var(--green); border-color: rgba(43, 213, 118, 0.35); }
 .badge.rec { background: rgba(181, 92, 255, 0.16); color: var(--purple); border-color: rgba(181, 92, 255, 0.4); }
 

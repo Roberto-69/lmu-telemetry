@@ -14,7 +14,22 @@
   const $updated = document.getElementById("updated");
   const $refresh = document.getElementById("refresh");
 
-  const CLASSES = ["Hypercar", "LMP2", "LMGT3"];
+  // Categorie mostrate nel selettore (id usato anche come classe CSS per il colore)
+  const CLASSES = ["HY", "P2", "P2E", "P3", "GT3", "GT3E"];
+  const CLASS_LABEL = { HY: "Hypercar", P2: "LMP2", P2E: "LMP2 ELMS", P3: "LMP3", GT3: "LMGT3", GT3E: "LMGT3 ELMS", GTE: "LMGTE", OTHER: "Altro" };
+  // Il gioco scrive le classi come "Hyper", "LMP2_ELMS", "GT3"...: le riconduce a un id fisso
+  function clsId(raw) {
+    const s = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const elms = s.includes("ELMS");
+    if (s.includes("HYPER") || s === "LMH" || s === "LMDH") return "HY";
+    if (s.includes("LMP2") || s === "P2") return elms ? "P2E" : "P2";
+    if (s.includes("LMP3") || s === "P3") return "P3";
+    if (s.includes("GT3")) return elms ? "GT3E" : "GT3";
+    if (s.includes("GTE")) return "GTE";
+    return "OTHER";
+  }
+  const clsLabel = (id) => CLASS_LABEL[id] || id;
+  const clsBadge = (id) => `<span class="badge cls ${id}">${esc(clsLabel(id))}</span>`;
   const SESSION_IT = { practice: "Prove", qualify: "Qualifica", race: "Gara", warmup: "Warm-up", testday: "Test" };
   const GRIP_IT = ["Verde", "Bassa", "Media", "Alta", "Satura"];
 
@@ -25,7 +40,7 @@
     mode: params.has("demo") ? "demo" : "live",
     tab: saved.tab || "board",
     trackId: saved.trackId ?? null,
-    cls: saved.cls || "all",
+    cls: CLASS_LABEL[saved.cls] ? saved.cls : "all",
     perDriver: saved.perDriver ?? true,
     selKey: null,
     data: null,
@@ -190,7 +205,7 @@
         key,
         driver_id: p.driver_id, nick: p.nick,
         track_id: p.track_id, track: p.track_display,
-        car_id: p.car_id, car: p.car, cls: p.car_class,
+        car_id: p.car_id, car: p.car, cls: clsId(p.car_class), rawCls: p.car_class,
         best: num(p.best_lap),
         pbS: [num(p.best_s1), num(p.best_s2), num(p.best_s3)],
         theo: num(p.theoretical),
@@ -246,7 +261,9 @@
     const bestSec = [0, 1, 2].map((i) => Math.min(...rows.map((r) => r.pbS[i] ?? Infinity)));
     const groupIdeal = bestSec.every(isFinite) ? bestSec.reduce((a, b) => a + b, 0) : null;
     const totalLaps = rows.reduce((a, r) => a + (r.laps || 0), 0);
-    const classesHere = CLASSES.filter((c) => track.rows.some((r) => r.cls === c));
+    const classesHere = new Set(track.rows.map((r) => r.cls));
+    // Le 6 categorie fisse, più eventuali altre (es. LMGTE) solo se presenti nei dati
+    const extra = [...new Set(d.rows.map((r) => r.cls))].filter((c) => !CLASSES.includes(c));
 
     const trackCards = d.tracks.map((t) => {
       const tr = t.rows.filter((r) => state.cls === "all" || r.cls === state.cls);
@@ -261,8 +278,8 @@
         </button>`;
     }).join("");
 
-    const clsButtons = [["all", "Tutte"], ...CLASSES.map((c) => [c, c])]
-      .map(([v, label]) => `<button data-cls="${v}" class="${state.cls === v ? "active" : ""}" ${v !== "all" && !classesHere.includes(v) ? "disabled style='opacity:.35'" : ""}>${v !== "all" ? `<span class="dot ${v}"></span>` : ""}${label}</button>`)
+    const clsButtons = [["all", "Tutte"], ...[...CLASSES, ...extra].map((c) => [c, clsLabel(c)])]
+      .map(([v, label]) => `<button data-cls="${v}" class="${state.cls === v ? "active" : ""}" ${v !== "all" && !classesHere.has(v) ? "disabled title='Nessun tempo su questa pista'" : ""}>${v !== "all" ? `<span class="dot ${v}"></span>` : ""}${esc(label)}</button>`)
       .join("");
 
     const body = rows.map((r, i) => {
@@ -299,7 +316,7 @@
 
       <section class="hero">
         <div>
-          <div class="section-label" style="margin:0 0 4px">${state.era ? `<span class="badge arch">ARCHIVIO</span> ` : ""}${state.cls === "all" ? "Tutte le classi" : esc(state.cls)}</div>
+          <div class="section-label" style="margin:0 0 4px">${state.era ? `<span class="badge arch">ARCHIVIO</span> ` : ""}${state.cls === "all" ? "Tutte le classi" : esc(clsLabel(state.cls))}</div>
           <h1>${esc(track.name)}</h1>
           <div class="h-sub">${km(track.length)} · ${rows.length} in classifica · ${totalLaps} giri validi</div>
         </div>
@@ -360,7 +377,7 @@
     ].filter(Boolean).join("");
 
     return `
-      <div class="panel-head"><h2>Dettaglio</h2><span class="badge cls ${esc(r.cls)}">${esc(r.cls)}</span></div>
+      <div class="panel-head"><h2>Dettaglio</h2>${clsBadge(r.cls)}</div>
       <div class="detail">
         <div class="d-head">
           <div><div class="nick">${esc(r.nick)}</div><div class="car">${esc(r.car)}</div></div>
@@ -515,12 +532,12 @@
       const valid = s.laps.filter((x) => x.valid);
       const best = valid.length ? Math.min(...valid.map((x) => num(x.lap_time))) : null;
       const isPb = best != null && Math.abs(best - (pbBest.get(s.key) ?? -1)) < 0.0005;
-      const isRec = best != null && Math.abs(best - (trackRec.get(`${l.track_id}|${l.car_class}`) ?? -1)) < 0.0005;
+      const isRec = best != null && Math.abs(best - (trackRec.get(`${l.track_id}|${clsId(l.car_class)}`) ?? -1)) < 0.0005;
       return `
         <li>
           <span class="when">${ago(new Date(s.last).toISOString())}</span>
           <div class="what">
-            <div class="l1">${esc(l.nick)} <span class="badge cls ${esc(l.car_class)}">${esc(l.car_class)}</span>
+            <div class="l1">${esc(l.nick)} ${clsBadge(clsId(l.car_class))}
               ${isRec ? `<span class="badge rec">RECORD</span>` : isPb ? `<span class="badge pb">PERSONALE</span>` : ""}
               ${l.session_type ? `<span class="badge">${esc(SESSION_IT[l.session_type] || l.session_type)}</span>` : ""}</div>
             <div class="l2">${esc(l.track_display || l.track)} · ${esc(l.car)} · ${s.laps.length} giri, ${valid.length} validi</div>
@@ -604,7 +621,7 @@
     if (!d.resets.length) return "";
     const opts = d.resets.map((x) => {
       const when = new Date(x.created_at).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-      return `<option value="${x.id}" ${state.era === x.id ? "selected" : ""}>Archivio: prima di «${esc(x.label)}» · ${esc(x.car_class || "tutte le classi")} · ${when}</option>`;
+      return `<option value="${x.id}" ${state.era === x.id ? "selected" : ""}>Archivio: prima di «${esc(x.label)}» · ${esc(x.car_class ? clsLabel(clsId(x.car_class)) : "tutte le classi")} · ${when}</option>`;
     }).join("");
     return `<label class="era"><span>Classifica</span><select id="era"><option value="">Attuale</option>${opts}</select></label>`;
   }
@@ -636,7 +653,7 @@
   async function renderLaps() {
     const r = state.data.byKey.get(state.view.key);
     if (!r) return renderMissing();
-    const head = viewHead(`${esc(r.nick)} · tutti i giri`, `${esc(r.track)} · ${esc(r.car)} <span class="badge cls ${esc(r.cls)}">${esc(r.cls)}</span>`);
+    const head = viewHead(`${esc(r.nick)} · tutti i giri`, `${esc(r.track)} · ${esc(r.car)} ${clsBadge(r.cls)}`);
     let laps = state.laps.get(r.key);
     if (!laps) {
       $app.innerHTML = head + `<div class="loading"><div class="spinner"></div>Carico i giri…</div>`;
@@ -793,12 +810,13 @@
       $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${state.mode === "demo" ? "Non disponibile nella demo." : "Prima va eseguito l'aggiornamento del database (002_telemetria_reset.sql)."}</p></div>`;
       return;
     }
-    const classes = [...new Set(d.rows.map((r) => r.cls))].filter(Boolean).sort();
+    // Il reset lavora sul nome di classe del gioco (es. "Hyper"), mostrato col nome leggibile
+    const classes = [...new Set(d.rows.map((r) => r.rawCls))].filter(Boolean).sort();
     $app.innerHTML = head + `
       <div class="panel reset">
         <div class="reset-body" id="rsBody">
           <p>Le classifiche scelte ripartono da zero. I record di adesso <b>non vengono cancellati</b>: restano consultabili dal menu <b>Classifica → Archivio</b>.</p>
-          <label>Cosa azzerare<select id="rsClass"><option value="">Tutte le classi</option>${classes.map((c) => `<option value="${esc(c)}">Solo ${esc(c)}</option>`).join("")}</select></label>
+          <label>Cosa azzerare<select id="rsClass"><option value="">Tutte le classi</option>${classes.map((c) => `<option value="${esc(c)}">Solo ${esc(clsLabel(clsId(c)))}</option>`).join("")}</select></label>
           <label>Nome del reset<input id="rsLabel" maxlength="60" placeholder="Patch 1.3" autocomplete="off"></label>
           <label>PIN<input id="rsPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></label>
           <div class="rs-msg" id="rsMsg"></div>
