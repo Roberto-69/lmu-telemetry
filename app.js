@@ -693,7 +693,10 @@
             <tbody>${rowsHtml}</tbody></table></div></div>`;
     }).join("");
 
+    const exported = new Date().toLocaleString("it-IT", { dateStyle: "long", timeStyle: "short" });
     $app.innerHTML = head + `
+      <div class="print-only print-head">LMU Telemetry · esportato il ${esc(exported)}${state.validOnly ? " · solo giri validi" : ""}
+        · viola = giro migliore, verde = migliore della serata, barrato = non valido</div>
       <div class="lap-stats">
         <div class="mini"><div class="k">Giro migliore</div><div class="v" style="color:var(--purple)">${fmtLap(r.best)}</div></div>
         <div class="mini"><div class="k">Giri</div><div class="v">${laps.length}</div></div>
@@ -703,11 +706,23 @@
       <div class="filters">
         <label class="switch"><input type="checkbox" id="validOnly" ${state.validOnly ? "checked" : ""}>Solo giri validi</label>
         <span class="hint"><span class="sec purple">viola</span> giro migliore · <span class="sec green">verde</span> migliore della serata · tocca un giro per i dettagli</span>
+        <button class="btn ghost sm" id="lapsPdf">Esporta PDF</button>
       </div>
       ${groups || `<div class="empty" style="padding:40px"><p>Nessun giro da mostrare.</p></div>`}
       <p class="foot-note">Restano le ultime 10 serate di giri; il giro migliore resta per sempre.</p>`;
 
     document.getElementById("validOnly").addEventListener("change", (e) => { state.validOnly = e.target.checked; renderLaps(); });
+    // PDF: la finestra di stampa del browser ("Salva come PDF"), con un foglio di stile chiaro (@media print).
+    // Il titolo della pagina diventa il nome proposto per il file.
+    document.getElementById("lapsPdf").addEventListener("click", () => {
+      const title = document.title;
+      const day = new Date().toLocaleDateString("sv-SE");
+      document.title = `LMU giri - ${r.nick} - ${r.track} - ${r.car} - ${day}`.replace(/[\\/:*?"<>|]/g, "");
+      const restore = () => { document.title = title; window.removeEventListener("afterprint", restore); };
+      window.addEventListener("afterprint", restore);
+      window.print();
+      setTimeout(restore, 1000); // alcuni browser non mandano afterprint
+    });
     $app.querySelectorAll("tr.lap-row").forEach((tr) => tr.addEventListener("click", () => {
       const id = isNaN(+tr.dataset.lap) ? tr.dataset.lap : +tr.dataset.lap;
       state.openLap = state.openLap === id ? null : id;

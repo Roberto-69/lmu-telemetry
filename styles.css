@@ -425,3 +425,40 @@ select, .reset input {
   .cmp-head .mini .v { font-size: 14px; }
   .ms { grid-template-columns: 80px 1fr 58px; }
 }
+
+/* ---------- PDF / stampa (lista giri) ---------- */
+.print-only { display: none; }
+@media print {
+  @page { size: A4; margin: 12mm; }
+  :root {
+    --bg: #fff; --bg-2: #f3f4f7; --surface: #fff; --surface-2: #f3f4f7; --line: #d7dae2; --line-2: #c3c8d3;
+    --text: #111; --muted: #4a5263; --faint: #7b8394; --purple: #7a2fd0; --green: #138a4a; --red: #c8283a;
+  }
+  html, body { background: #fff !important; color: #111; font-size: 11px; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-shadow: none !important; }
+  .stripe, .topbar, .tabs, .foot, .back, .filters, .btn { display: none !important; }
+  .print-only { display: block; }
+  .print-head { color: var(--muted); font-size: 10px; margin-bottom: 8px; }
+  main { padding: 0; max-width: none; }
+  .view-head { margin-bottom: 8px; }
+  .view-head h1 { font-size: 20px; }
+  .lap-stats { grid-template-columns: repeat(4, 1fr); margin-bottom: 10px; }
+  .mini { padding: 6px 8px; }
+  .mini .v { font-size: 14px; }
+  .panel { border-color: var(--line); }
+  .panel.ev { break-inside: auto; margin-bottom: 10px; }
+  .panel-head { padding: 6px 10px; break-after: avoid; }
+  .panel-head .hint { display: inline !important; }
+  .board td, .board th { padding: 3px 8px; }
+  .board tr { break-inside: avoid; }
+  .board tbody tr.open, .board tbody tr.sel { background: none; }
+  .col-sec, .col-tyre, .col-fuel, .col-ideal, .col-laps, .col-when { display: table-cell !important; }
+  .time { font-size: 11px; }
+  .sec, .gap { font-size: 10px; }
+  .sec { color: #222; }
+  .badge { font-size: 8px; }
+  .badge.cls { color: #fff; }
+  .laps tr.lap-ex td { background: #fafbfc; }
+  .chip { padding: 2px 6px; font-size: 9px; }
+  .foot-note { font-size: 9px; }
+}
