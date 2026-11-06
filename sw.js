@@ -1,5 +1,5 @@
 // Cache dell'app per aprirla anche senza rete. I dati (Supabase) passano sempre dalla rete.
-const CACHE = "lmu-app-v4";
+const CACHE = "lmu-app-v5";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "config.js", "demo.js", "compare.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

@@ -44,6 +44,9 @@
     perDriver: saved.perDriver ?? true,
     selKey: null,
     data: null,
+    raw: null,           // dati grezzi dell'ultimo caricamento (per aggiungere i giri nuovi)
+    moves: new Map(),    // chiave riga -> { gain, at }: posizioni guadagnate di recente
+    seenAt: new Map(),   // id giro -> quando l'app l'ha visto arrivare
     history: new Map(),
     laps: new Map(),     // tutti i giri per chiave pilota|pista|auto
     traces: new Map(),   // telemetria decodificata per chiave
@@ -234,6 +237,86 @@
     return { rows, tracks: trackList, maxLen, recent, resets: resets || [], legacy: !!legacy, byKey: new Map(rows.map((r) => [r.key, r])) };
   }
 
+  // ---------------------------------------------------------------- live
+  // Ogni pochi secondi chiede solo i giri con id più alto dell'ultimo visto: se non c'è niente
+  // di nuovo la risposta è "[]". Quando arriva un giro scarica solo i record toccati da quel giro.
+  const LIVE_POLL_MS = 4000;
+  const FULL_RELOAD_MS = 5 * 60000;   // ricarica completa di sicurezza (telemetrie, ban, reset)
+  const ON_TRACK_MS = 6 * 60000;      // "in pista" se ha chiuso un giro negli ultimi 6 minuti
+  const MOVE_SHOW_MS = 3 * 60000;     // per quanto restano le frecce delle posizioni
+  const FLASH_MS = 8000;              // evidenziazione della riga appena migliorata
+  let lastFull = 0;
+  let polling = false;
+
+  async function pollLive() {
+    if (polling || state.mode !== "live" || state.era || state.view || !state.raw || state.raw.legacy) return;
+    if (document.visibilityState !== "visible") return;
+    if (Date.now() - lastFull > FULL_RELOAD_MS) return load(true);
+    polling = true;
+    try {
+      const raw = state.raw;
+      const lastId = raw.recent.reduce((m, l) => Math.max(m, l.id || 0), 0);
+      const fresh = await api(`v_laps?select=*&id=gt.${lastId}&order=id.asc&limit=200`);
+      if (!fresh.length || state.raw !== raw || state.era || state.view) return;
+      const now = Date.now();
+      for (const l of fresh) state.seenAt.set(l.id, now);
+      const combos = [...new Map(fresh.filter((l) => l.valid).map((l) => [comboKey(l), l])).values()];
+      if (combos.length) {
+        const or = combos.map((l) => `and(driver_id.eq.${l.driver_id},track_id.eq.${l.track_id},car_id.eq.${l.car_id})`).join(",");
+        const pbs = await api(`v_pb?select=*&is_current=is.true&or=(${or})`);
+        const byKey = new Map(raw.pb.map((p) => [comboKey(p), p]));
+        for (const p of pbs) byKey.set(comboKey(p), p);
+        raw.pb = [...byKey.values()];
+      }
+      raw.recent = [...fresh.reverse(), ...raw.recent].slice(0, 400);
+      applyData(raw, true);
+    } catch {
+      /* rete assente: riprova al giro successivo */
+    } finally {
+      polling = false;
+    }
+  }
+
+  // Confronta la classifica di prima con quella nuova, con i filtri che sta usando chi guarda
+  function markMoves(prev, next) {
+    const now = Date.now();
+    const id = (r) => (state.perDriver ? r.driver_id : r.key);
+    for (const t of next.tracks) {
+      const old = prev.tracks.find((x) => x.id === t.id);
+      if (!old) continue;
+      const before = new Map(boardRows(old).map((r, i) => [id(r), { pos: i, best: r.best }]));
+      boardRows(t).forEach((r, i) => {
+        const b = before.get(id(r));
+        if (!b) state.moves.set(r.key, { gain: null, at: now });
+        else if (r.best < b.best - 0.0005) state.moves.set(r.key, { gain: b.pos - i, at: now });
+      });
+    }
+    for (const [k, m] of state.moves) if (now - m.at > MOVE_SHOW_MS) state.moves.delete(k);
+  }
+
+  // Pilota -> ultimo giro, per chi ha girato negli ultimi minuti
+  function onTrackNow() {
+    const res = new Map();
+    if (state.mode !== "live" || state.era || !state.data) return res;
+    const now = Date.now();
+    for (const l of state.data.recent) {
+      if (res.has(l.driver_id)) continue;
+      let at = new Date(l.driven_at).getTime();
+      if (at > now + 60000) at = 0; // orologio del PC avanti: non ci si fida
+      at = Math.max(at, state.seenAt.get(l.id) || 0);
+      if (now - at < ON_TRACK_MS) res.set(l.driver_id, l);
+    }
+    return res;
+  }
+
+  function moveHtml(key) {
+    const m = state.moves.get(key);
+    if (!m || Date.now() - m.at > MOVE_SHOW_MS) return "";
+    if (m.gain == null) return `<span class="move new" title="Nuovo in classifica">NEW</span>`;
+    if (m.gain > 0) return `<span class="move up" title="Posizioni guadagnate">▲${m.gain}</span>`;
+    return `<span class="move pb" title="Ha migliorato il suo tempo">▲</span>`;
+  }
+
   // ---------------------------------------------------------------- classifica
   function boardRows(track) {
     let rows = track.rows.filter((r) => state.cls === "all" || r.cls === state.cls);
@@ -264,16 +347,19 @@
     const classesHere = new Set(track.rows.map((r) => r.cls));
     // Le 6 categorie fisse, più eventuali altre (es. LMGTE) solo se presenti nei dati
     const extra = [...new Set(d.rows.map((r) => r.cls))].filter((c) => !CLASSES.includes(c));
+    const live = onTrackNow();
+    const liveHere = [...live.values()].filter((l) => l.track_id === track.id);
 
     const trackCards = d.tracks.map((t) => {
       const tr = t.rows.filter((r) => state.cls === "all" || r.cls === state.cls);
       const rec = tr.reduce((a, r) => (!a || r.best < a.best ? r : a), null);
       const drivers = new Set(t.rows.map((r) => r.driver_id)).size;
+      const nOn = [...live.values()].filter((l) => l.track_id === t.id).length;
       return `
         <button class="track-card ${t.id === track.id ? "active" : ""}" data-track="${esc(t.id)}">
           <div class="t-name" title="${esc(t.name)}">${esc(t.name)}</div>
           <div class="len-bar"><i style="width:${Math.round(((t.length || 0) / d.maxLen) * 100)}%"></i></div>
-          <div class="t-meta"><span>${km(t.length)}</span><span>${drivers} pilot${drivers === 1 ? "a" : "i"}</span></div>
+          <div class="t-meta"><span>${km(t.length)}</span>${nOn ? `<span class="on-track">${nOn} in pista</span>` : `<span>${drivers} pilot${drivers === 1 ? "a" : "i"}</span>`}</div>
           <div class="t-meta"><span class="t-rec">${rec ? fmtLap(rec.best) : "—"}</span><span>${rec ? esc(rec.nick) : ""}</span></div>
         </button>`;
     }).join("");
@@ -290,11 +376,15 @@
         else if (s != null && r.pbS[si] != null && Math.abs(s - r.pbS[si]) < 0.0005) c = "green";
         return `<td class="r col-sec"><span class="sec ${c}">${fmtSec(s)}</span></td>`;
       }).join("");
+      const mv = state.moves.get(r.key);
+      const flash = mv && Date.now() - mv.at < FLASH_MS ? "flash" : "";
+      const onT = live.get(r.driver_id);
+      const dot = onT && onT.track_id === r.track_id ? `<span class="live-dot" title="In pista ora · ${esc(onT.car)}"></span>` : "";
       return `
-        <tr data-key="${esc(r.key)}" class="${r.key === state.selKey ? "sel" : ""}">
-          <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</td>
+        <tr data-key="${esc(r.key)}" class="${r.key === state.selKey ? "sel" : ""} ${flash}">
+          <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}${moveHtml(r.key)}</td>
           <td><div class="driver"><span class="cls-bar ${esc(r.cls)}"></span><div style="min-width:0">
-            <div class="nick">${esc(r.nick)}</div><div class="car">${esc(r.car)}</div></div></div></td>
+            <div class="nick">${esc(r.nick)}${dot}</div><div class="car">${esc(r.car)}</div></div></div></td>
           <td class="r"><span class="time">${fmtLap(r.best)}</span></td>
           <td class="r"><span class="gap">${i === 0 ? "" : fmtGap(gap)}</span></td>
           ${secs}
@@ -304,6 +394,8 @@
         </tr>`;
     }).join("");
 
+    // la pagina si ridisegna da sola quando arriva un giro: non perdere lo scorrimento delle piste
+    const prevScroll = $app.querySelector(".tracks")?.scrollLeft || 0;
     $app.innerHTML = `
       <div class="section-label">Piste</div>
       <div class="tracks">${trackCards}</div>
@@ -319,6 +411,7 @@
           <div class="section-label" style="margin:0 0 4px">${state.era ? `<span class="badge arch">ARCHIVIO</span> ` : ""}${state.cls === "all" ? "Tutte le classi" : esc(clsLabel(state.cls))}</div>
           <h1>${esc(track.name)}</h1>
           <div class="h-sub">${km(track.length)} · ${rows.length} in classifica · ${totalLaps} giri validi</div>
+          ${liveHere.length ? `<div class="h-live"><span class="live-dot"></span>In pista ora: ${liveHere.map((l) => esc(l.nick)).join(", ")}</div>` : ""}
         </div>
         <div class="stat"><div class="k">Record</div><div class="v">${leader ? fmtLap(leader.best) : "—"}</div><div class="d">${leader ? esc(leader.nick) + " · " + esc(leader.car) : ""}</div></div>
         <div class="stat"><div class="k">Ideale del gruppo</div><div class="v purple">${fmtLap(groupIdeal)}</div><div class="d">migliori settori di tutti</div></div>
@@ -342,6 +435,8 @@
         <div class="panel" id="detail">${renderDetailHtml(rows, leader)}</div>
       </div>`;
 
+    const $tracks = $app.querySelector(".tracks");
+    if ($tracks) $tracks.scrollLeft = prevScroll;
     bindBoard(rows, leader);
     loadHistory();
   }
@@ -489,6 +584,7 @@
     if (era) era.addEventListener("change", () => {
       state.era = era.value ? +era.value : null;
       state.selKey = null;
+      state.moves.clear();
       clearCaches();
       load();
     });
@@ -917,15 +1013,24 @@
     load();
   }
 
+  function applyData(raw, compare) {
+    const prev = state.data;
+    state.raw = raw;
+    state.data = build(raw);
+    if (compare && prev && state.mode === "live" && !state.era) markMoves(prev, state.data);
+    setStatus();
+    $updated.textContent = `Aggiornato alle ${new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    // nelle pagine di dettaglio non si ridisegna: i dati nuovi si vedono tornando alla classifica
+    if (!state.view || !compare) render();
+  }
+
   async function load(silent) {
+    lastFull = Date.now();
     $refresh.classList.add("spin");
     if (!silent && !state.data) $app.innerHTML = `<div class="loading"><div class="spinner"></div>Carico i tempi…</div>`;
     try {
       const raw = await source().overview();
-      state.data = build(raw);
-      setStatus();
-      $updated.textContent = `Aggiornato alle ${new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}`;
-      render();
+      applyData(raw, !!silent);
     } catch (e) {
       $status.className = "status error";
       $status.textContent = "OFFLINE";
@@ -960,7 +1065,9 @@
     render();
   });
   parseHash();
-  setInterval(() => { if (state.mode === "live" && !state.view && document.visibilityState === "visible") load(true); }, (cfg.refreshSeconds || 60) * 1000);
+  setInterval(pollLive, LIVE_POLL_MS);
+  // tornando sull'app (telefono sbloccato, scheda riaperta) controlla subito
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pollLive(); });
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

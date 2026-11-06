@@ -469,3 +469,24 @@ select, .reset input {
   .chip { padding: 2px 6px; font-size: 9px; }
   .foot-note { font-size: 9px; }
 }
+
+/* ---------------------------------------------------------------- live */
+.move { display: block; font-size: 10px; line-height: 1.2; letter-spacing: 0.02em; margin-top: 1px; }
+.move.up, .move.pb { color: var(--green); }
+.move.new { color: var(--accent); }
+.board tr.flash td { animation: row-flash 8s ease-out; }
+@keyframes row-flash {
+  0%, 12% { background: rgba(43, 213, 118, 0.22); }
+  100% { background: transparent; }
+}
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 7px; vertical-align: middle;
+  background: var(--green); box-shadow: 0 0 0 0 rgba(43, 213, 118, 0.6); animation: pulse 2s infinite;
+}
+.hero .h-live { display: flex; align-items: center; gap: 0; margin-top: 6px; color: var(--green); font-size: 13px; font-weight: 600; }
+.hero .h-live .live-dot { margin: 0 8px 0 0; }
+.track-card .on-track { color: var(--green); font-weight: 700; }
+.track-card .on-track::before { content: "● "; }
+@media (prefers-reduced-motion: reduce) {
+  .board tr.flash td, .live-dot { animation: none; }
+}
