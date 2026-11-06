@@ -1,5 +1,8 @@
 /* LMU Telemetry - app classifiche
- * Dati: viste Supabase v_personal_best, v_best_laps, v_laps (solo lettura con chiave publishable).
+ * Dati: viste Supabase v_pb (giri migliori), v_pb_archive, v_laps, tabella lap_traces (telemetria),
+ * funzione reset_leaderboards (con PIN). Solo lettura con chiave publishable, tranne il reset.
+ * Se il database non è ancora aggiornato (002_telemetria_reset.sql) usa le viste di prima, senza telemetria.
+ * Pagine: #giri/<chiave> lista giri, #confronto/<chiave>[/<chiave>] telemetria, #reset.
  * Demo: ?demo=1 oppure pulsante, con dati generati da demo.js.
  */
 (function () {
@@ -27,6 +30,12 @@
     selKey: null,
     data: null,
     history: new Map(),
+    laps: new Map(),     // tutti i giri per chiave pilota|pista|auto
+    traces: new Map(),   // telemetria decodificata per chiave
+    view: null,          // { type: "giri" | "confronto" | "reset", key, ref }
+    era: null,           // id del reset da cui vedere l'archivio (null = classifica attuale)
+    validOnly: false,
+    openLap: null,
   };
 
   function persist() {
@@ -72,6 +81,17 @@
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   }
+  async function rpc(fn, body) {
+    const res = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: { apikey: cfg.publishableKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+  const comboKey = (x) => `${x.driver_id}|${x.track_id}|${x.car_id}`;
+  const enc = encodeURIComponent;
 
   // Stessa logica delle viste SQL, per la demo
   function aggregate(laps) {
@@ -88,29 +108,52 @@
       const b = list.reduce((a, x) => (x.lap_time < a.lap_time || (x.lap_time === a.lap_time && x.driven_at < a.driven_at) ? x : a));
       const s = [0, 1, 2].map((i) => Math.min(...list.map((x) => x["s" + (i + 1)])));
       pb.push({
-        driver_id: b.driver_id, nick: b.nick, track_id: b.track_id, track_display: b.track_display,
-        car_id: b.car_id, car: b.car, car_class: b.car_class,
+        ...b,
         best_lap: b.lap_time, best_s1: s[0], best_s2: s[1], best_s3: s[2],
         theoretical: Math.round((s[0] + s[1] + s[2]) * 1000) / 1000,
         valid_laps: list.length, last_driven: list.reduce((a, x) => (x.driven_at > a ? x.driven_at : a), ""),
+        lap_id: b.id, has_trace: true, era_id: 0, is_current: true,
       });
-      best.push(b);
     }
     const recent = [...laps].sort((a, b) => (a.driven_at < b.driven_at ? 1 : -1)).slice(0, 400);
-    return { pb, best, recent };
+    return { pb, recent, resets: [], legacy: false };
   }
 
   const Live = {
     async overview() {
-      const [pb, best, recent] = await Promise.all([
-        api("v_personal_best?select=*"),
-        api("v_best_laps?select=*"),
-        api("v_laps?select=*&order=driven_at.desc&limit=400"),
-      ]);
-      return { pb, best, recent };
+      const recentP = api("v_laps?select=*&order=driven_at.desc&limit=400");
+      try {
+        const [pb, resets] = await Promise.all([
+          state.era ? api(`v_pb_archive?select=*&archived_by=eq.${state.era}`) : api("v_pb?select=*&is_current=is.true"),
+          api("resets?select=*&order=id.desc"),
+        ]);
+        return { pb, recent: await recentP, resets, legacy: false };
+      } catch (e) {
+        if (state.era) throw e;
+        // database non ancora aggiornato: viste di prima, niente telemetria / archivio / reset
+        const [pb, best] = await Promise.all([api("v_personal_best?select=*"), api("v_best_laps?select=*")]);
+        const bm = new Map(best.map((b) => [comboKey(b), b]));
+        const merged = pb.map((p) => {
+          const b = bm.get(comboKey(p)) || {};
+          return { ...b, ...p, lap_id: b.id, has_trace: false, era_id: 0 };
+        });
+        return { pb: merged, recent: await recentP, resets: [], legacy: true };
+      }
     },
     history(r) {
       return api(`v_laps?select=lap_time,driven_at,valid&driver_id=eq.${r.driver_id}&track_id=eq.${r.track_id}&car_id=eq.${r.car_id}&valid=is.true&order=driven_at.asc&limit=1000`);
+    },
+    laps(r) {
+      const era = state.data.legacy ? "" : `&era_id=eq.${r.era}`;
+      return api(`v_laps?select=*&driver_id=eq.${r.driver_id}&track_id=eq.${r.track_id}&car_id=eq.${r.car_id}${era}&order=driven_at.desc&limit=5000`);
+    },
+    async trace(r) {
+      const rows = await api(`lap_traces?select=lap_id,step_m,points,data&lap_id=eq.${r.lapId}`);
+      if (!rows.length) throw new Error("telemetria mancante");
+      return window.LMU_COMPARE.decode(rows[0]);
+    },
+    reset(body) {
+      return rpc("reset_leaderboards", body);
     },
   };
 
@@ -125,14 +168,24 @@
         .filter((l) => l.valid && l.driver_id === r.driver_id && l.track_id === r.track_id && l.car_id === r.car_id)
         .sort((a, b) => (a.driven_at < b.driven_at ? -1 : 1));
     },
+    async laps(r) {
+      return demoLaps
+        .filter((l) => l.driver_id === r.driver_id && l.track_id === r.track_id && l.car_id === r.car_id)
+        .sort((a, b) => (a.driven_at < b.driven_at ? 1 : -1));
+    },
+    async trace(r) {
+      return window.LMU_DEMO.trace({ track_id: r.track_id, driver_id: r.driver_id, car_id: r.car_id, length_m: r.lap.length, best: r.best });
+    },
+    async reset() {
+      return { ok: false, error: "demo" };
+    },
   };
   const source = () => (state.mode === "demo" ? Demo : Live);
 
-  function build({ pb, best, recent }) {
-    const bestMap = new Map(best.map((b) => [`${b.driver_id}|${b.track_id}|${b.car_id}`, b]));
+  function build({ pb, recent, resets, legacy }) {
     const rows = pb.map((p) => {
-      const key = `${p.driver_id}|${p.track_id}|${p.car_id}`;
-      const lap = bestMap.get(key) || {};
+      const key = comboKey(p);
+      const lap = p;
       return {
         key,
         driver_id: p.driver_id, nick: p.nick,
@@ -142,6 +195,7 @@
         pbS: [num(p.best_s1), num(p.best_s2), num(p.best_s3)],
         theo: num(p.theoretical),
         laps: p.valid_laps, last: p.last_driven,
+        era: p.era_id ?? 0, lapId: p.lap_id, hasTrace: !!p.has_trace,
         lap: {
           s: [num(lap.s1), num(lap.s2), num(lap.s3)],
           fuel: num(lap.fuel_start), ve: num(lap.ve_start), tyre: lap.tyre_front,
@@ -162,7 +216,7 @@
     }
     const trackList = [...tracks.values()].sort((a, b) => (a.last < b.last ? 1 : -1));
     const maxLen = Math.max(...trackList.map((t) => t.length || 0), 1);
-    return { rows, tracks: trackList, maxLen, recent, byKey: new Map(rows.map((r) => [r.key, r])) };
+    return { rows, tracks: trackList, maxLen, recent, resets: resets || [], legacy: !!legacy, byKey: new Map(rows.map((r) => [r.key, r])) };
   }
 
   // ---------------------------------------------------------------- classifica
@@ -240,11 +294,12 @@
       <div class="filters">
         <div class="seg" id="cls">${clsButtons}</div>
         <label class="switch"><input type="checkbox" id="perDriver" ${state.perDriver ? "checked" : ""}>Solo la miglior auto di ogni pilota</label>
+        ${eraSelectHtml()}
       </div>
 
       <section class="hero">
         <div>
-          <div class="section-label" style="margin:0 0 4px">${state.cls === "all" ? "Tutte le classi" : esc(state.cls)}</div>
+          <div class="section-label" style="margin:0 0 4px">${state.era ? `<span class="badge arch">ARCHIVIO</span> ` : ""}${state.cls === "all" ? "Tutte le classi" : esc(state.cls)}</div>
           <h1>${esc(track.name)}</h1>
           <div class="h-sub">${km(track.length)} · ${rows.length} in classifica · ${totalLaps} giri validi</div>
         </div>
@@ -311,6 +366,7 @@
           <div><div class="nick">${esc(r.nick)}</div><div class="car">${esc(r.car)}</div></div>
           <div class="d-time"><span class="time">${fmtLap(r.best)}</span><span class="gap">${isLeader ? "Record della pista" : fmtGap(r.best - leader.best) + " dal primo"}</span></div>
         </div>
+        ${detailActionsHtml(r)}
 
         <div>
           <div class="sub-label"><span>${isLeader ? "Settori del giro record" : "Settori rispetto al primo"}</span><span>${isLeader ? "" : esc(leader.nick)}</span></div>
@@ -412,6 +468,13 @@
     );
     const pd = document.getElementById("perDriver");
     if (pd) pd.addEventListener("change", () => { state.perDriver = pd.checked; persist(); render(); });
+    const era = document.getElementById("era");
+    if (era) era.addEventListener("change", () => {
+      state.era = era.value ? +era.value : null;
+      state.selKey = null;
+      clearCaches();
+      load();
+    });
     $app.querySelectorAll("tr[data-key]").forEach((tr) =>
       tr.addEventListener("click", () => {
         state.selKey = tr.dataset.key;
@@ -519,6 +582,263 @@
     $app.innerHTML = `<div class="section-label">Piloti del gruppo · ordinati per record di pista (per classe)</div><div class="drivers">${cards}</div>`;
   }
 
+  // ---------------------------------------------------------------- pagine (#giri, #confronto, #reset)
+  function parseHash() {
+    const [type, a, b] = decodeURIComponent(location.hash.slice(1)).split("/");
+    state.view = ["giri", "confronto", "reset"].includes(type) ? { type, key: a || null, ref: b || null } : null;
+    state.openLap = null;
+  }
+  function goHome() {
+    history.pushState(null, "", location.pathname + location.search);
+    state.view = null;
+    render();
+  }
+  function clearCaches() {
+    state.history.clear();
+    state.laps.clear();
+    state.traces.clear();
+  }
+
+  function eraSelectHtml() {
+    const d = state.data;
+    if (!d.resets.length) return "";
+    const opts = d.resets.map((x) => {
+      const when = new Date(x.created_at).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+      return `<option value="${x.id}" ${state.era === x.id ? "selected" : ""}>Archivio: prima di «${esc(x.label)}» · ${esc(x.car_class || "tutte le classi")} · ${when}</option>`;
+    }).join("");
+    return `<label class="era"><span>Classifica</span><select id="era"><option value="">Attuale</option>${opts}</select></label>`;
+  }
+
+  function detailActionsHtml(r) {
+    const d = state.data;
+    if (d.legacy) return "";
+    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.hasTrace && x.key !== r.key);
+    const lapsBtn = state.era ? "" : `<a class="btn ghost sm" href="#giri/${enc(r.key)}">Tutti i giri</a>`;
+    let tel;
+    if (!r.hasTrace) tel = `<span class="d-note">Telemetria: arriva con il prossimo record personale</span>`;
+    else if (!peers.length) tel = `<span class="d-note">Telemetria pronta: manca un altro pilota con cui confrontarla</span>`;
+    else tel = `<a class="btn sm" href="#confronto/${enc(r.key)}">Confronta telemetria</a>`;
+    return `<div class="d-actions">${lapsBtn}${tel}</div>`;
+  }
+
+  function viewHead(title, sub) {
+    return `<div class="view-head"><a class="back" href="#">← Classifiche</a>
+      <div><h1>${title}</h1>${sub ? `<div class="h-sub">${sub}</div>` : ""}</div></div>`;
+  }
+  function renderMissing() {
+    $app.innerHTML = viewHead("Non trovato") + `<div class="empty" style="padding:40px"><p>Questo pilota non è più nella classifica che stai guardando.</p></div>`;
+  }
+
+  // Serata = data locale con cambio giorno alle 6 del mattino (come la pulizia nel database)
+  const eveningOf = (iso) => new Date(new Date(iso).getTime() - 6 * 3600000).toLocaleDateString("sv-SE");
+  const eveningLabel = (day) => new Date(day + "T12:00:00").toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+
+  async function renderLaps() {
+    const r = state.data.byKey.get(state.view.key);
+    if (!r) return renderMissing();
+    const head = viewHead(`${esc(r.nick)} · tutti i giri`, `${esc(r.track)} · ${esc(r.car)} <span class="badge cls ${esc(r.cls)}">${esc(r.cls)}</span>`);
+    let laps = state.laps.get(r.key);
+    if (!laps) {
+      $app.innerHTML = head + `<div class="loading"><div class="spinner"></div>Carico i giri…</div>`;
+      try {
+        laps = (await source().laps(r)).map((l) => ({ ...l, lap_time: num(l.lap_time), s1: num(l.s1), s2: num(l.s2), s3: num(l.s3) }));
+        state.laps.set(r.key, laps);
+      } catch {
+        $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>Giri non disponibili. Controlla la connessione e riprova.</p></div>`;
+        return;
+      }
+      if (state.view?.type !== "giri" || state.view.key !== r.key) return;
+    }
+
+    const shown = state.validOnly ? laps.filter((l) => l.valid) : laps;
+    const evenings = new Map();
+    for (const l of shown) {
+      const k = eveningOf(l.driven_at);
+      if (!evenings.has(k)) evenings.set(k, []);
+      evenings.get(k).push(l);
+    }
+    const valid = laps.filter((l) => l.valid);
+    const avg = valid.length ? valid.reduce((a, l) => a + l.lap_time, 0) / valid.length : null;
+
+    const groups = [...evenings.entries()].map(([day, list]) => {
+      list.sort((a, b) => (a.driven_at < b.driven_at ? -1 : 1));
+      const clean = list.filter((l) => l.valid && !l.pit_lap);
+      const bestSec = [1, 2, 3].map((i) => Math.min(...clean.map((l) => l["s" + i] ?? Infinity)));
+      const bestEv = clean.length ? Math.min(...clean.map((l) => l.lap_time)) : null;
+      const rowsHtml = list.map((l) => {
+        const isPb = l.id === r.lapId;
+        const tc = isPb ? "purple" : l.valid && bestEv != null && Math.abs(l.lap_time - bestEv) < 0.0005 ? "green" : "";
+        const secs = [1, 2, 3].map((i) => {
+          const v = l["s" + i];
+          const g = l.valid && !l.pit_lap && v != null && Math.abs(v - bestSec[i - 1]) < 0.0005;
+          return `<td class="r col-sec"><span class="sec ${g ? "green" : ""}">${fmtSec(v)}</span></td>`;
+        }).join("");
+        const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
+        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "");
+        const open = state.openLap === l.id;
+        const extra = open ? `<tr class="lap-ex"><td colspan="8"><div class="chips">${lapChips(l)}</div></td></tr>` : "";
+        return `<tr class="lap-row ${l.valid ? "" : "inv"} ${open ? "open" : ""}" data-lap="${esc(l.id)}">
+            <td><span class="lap-n">${l.lap_no ?? "—"}</span>${tags}</td>
+            <td class="r"><span class="time ${tc}">${fmtLap(l.lap_time)}</span></td>
+            <td class="r"><span class="gap">${l.valid ? (isPb ? "" : fmtGap(l.lap_time - r.best)) : ""}</span></td>
+            ${secs}
+            <td class="r col-tyre"><span class="gap">${esc(l.tyre_front || "—")}</span></td>
+            <td class="r col-fuel"><span class="gap">${used == null ? "—" : used.toFixed(1) + " L"}</span></td>
+          </tr>${extra}`;
+      }).join("");
+      return `<div class="panel ev">
+          <div class="panel-head"><h2>${esc(eveningLabel(day))}</h2><span class="hint">${list.length} giri · migliore ${fmtLap(bestEv)}</span></div>
+          <div style="overflow-x:auto"><table class="board laps">
+            <thead><tr><th>Giro</th><th class="r">Tempo</th><th class="r">Distacco</th><th class="r col-sec">S1</th><th class="r col-sec">S2</th><th class="r col-sec">S3</th><th class="r col-tyre">Gomme</th><th class="r col-fuel">Benzina</th></tr></thead>
+            <tbody>${rowsHtml}</tbody></table></div></div>`;
+    }).join("");
+
+    $app.innerHTML = head + `
+      <div class="lap-stats">
+        <div class="mini"><div class="k">Giro migliore</div><div class="v" style="color:var(--purple)">${fmtLap(r.best)}</div></div>
+        <div class="mini"><div class="k">Giri</div><div class="v">${laps.length}</div></div>
+        <div class="mini"><div class="k">Media validi</div><div class="v">${fmtLap(avg)}</div></div>
+        <div class="mini"><div class="k">Serate</div><div class="v">${new Set(laps.map((l) => eveningOf(l.driven_at))).size}</div></div>
+      </div>
+      <div class="filters">
+        <label class="switch"><input type="checkbox" id="validOnly" ${state.validOnly ? "checked" : ""}>Solo giri validi</label>
+        <span class="hint"><span class="sec purple">viola</span> giro migliore · <span class="sec green">verde</span> migliore della serata · tocca un giro per i dettagli</span>
+      </div>
+      ${groups || `<div class="empty" style="padding:40px"><p>Nessun giro da mostrare.</p></div>`}
+      <p class="foot-note">Restano le ultime 10 serate di giri; il giro migliore resta per sempre.</p>`;
+
+    document.getElementById("validOnly").addEventListener("change", (e) => { state.validOnly = e.target.checked; renderLaps(); });
+    $app.querySelectorAll("tr.lap-row").forEach((tr) => tr.addEventListener("click", () => {
+      const id = isNaN(+tr.dataset.lap) ? tr.dataset.lap : +tr.dataset.lap;
+      state.openLap = state.openLap === id ? null : id;
+      renderLaps();
+    }));
+  }
+
+  function lapChips(l) {
+    const used = (a, b, f) => (a != null && b != null ? f(a, b) : null);
+    return [
+      `<span class="chip">${esc(SESSION_IT[l.session_type] || l.session_type || "")}${l.online ? " · online" : ""}</span>`,
+      `<span class="chip">Ora <b>${new Date(l.driven_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}</b></span>`,
+      l.tyre_front && `<span class="chip">Gomme <b>${esc(l.tyre_front)}${l.tyre_rear && l.tyre_rear !== l.tyre_front ? " / " + esc(l.tyre_rear) : ""}</b></span>`,
+      l.fuel_start != null && `<span class="chip">Benzina <b>${num(l.fuel_start).toFixed(1)} → ${l.fuel_end != null ? num(l.fuel_end).toFixed(1) : "—"} L</b></span>`,
+      l.ve_start ? `<span class="chip">Energia <b>${pct(num(l.ve_start))} → ${pct(num(l.ve_end))}</b>${used(l.ve_start, l.ve_end, (a, b) => ` (−${((a - b) * 100).toFixed(1)}%)`) || ""}</span>` : "",
+      l.stint_lap != null && `<span class="chip">Giro stint <b>${l.stint_lap}</b></span>`,
+      (l.tc != null || l.abs != null) && `<span class="chip">TC <b>${l.tc ?? "—"}</b> ABS <b>${l.abs ?? "—"}</b></span>`,
+      l.track_temp != null && `<span class="chip">Pista <b>${Math.round(l.track_temp)}°C</b> Aria <b>${l.air_temp != null ? Math.round(l.air_temp) : "—"}°C</b></span>`,
+      l.grip_level != null && `<span class="chip">Grip <b>${GRIP_IT[l.grip_level] ?? l.grip_level}</b></span>`,
+    ].filter(Boolean).join("");
+  }
+
+  async function getTrace(r) {
+    if (state.traces.has(r.key)) return state.traces.get(r.key);
+    const t = await source().trace(r);
+    state.traces.set(r.key, t);
+    return t;
+  }
+
+  async function renderCompare() {
+    const v = state.view;
+    const d = state.data;
+    const r = d.byKey.get(v.key);
+    if (!r) return renderMissing();
+    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.hasTrace && x.key !== r.key).sort((a, b) => a.best - b.best);
+    const classRec = Math.min(...d.rows.filter((x) => x.track_id === r.track_id && x.cls === r.cls).map((x) => x.best));
+    const ref = (v.ref && d.byKey.get(v.ref)) || peers.find((x) => x.cls === r.cls) || peers[0];
+    const head = viewHead(`Telemetria · ${esc(r.nick)}${ref ? " vs " + esc(ref.nick) : ""}`, `${esc(r.track)} · ${esc(r.car)}${ref && ref.car !== r.car ? " / " + esc(ref.car) : ""}`);
+    if (!r.hasTrace || !ref) {
+      $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${!r.hasTrace ? "Per questo giro migliore non c'è la telemetria: arriva con il prossimo record personale fatto con il tracker aggiornato." : "Nessun altro pilota ha la telemetria su questa pista."}</p></div>`;
+      return;
+    }
+    $app.innerHTML = head + `<div id="cmp"><div class="loading"><div class="spinner"></div>Carico la telemetria…</div></div>`;
+    let A, B;
+    try {
+      [A, B] = await Promise.all([getTrace(r), getTrace(ref)]);
+    } catch (e) {
+      const unsupported = typeof DecompressionStream === "undefined";
+      document.getElementById("cmp").innerHTML = `<div class="empty" style="padding:40px"><p>${unsupported ? "Questo browser è troppo vecchio per leggere la telemetria: aggiorna Chrome o Safari." : "Telemetria non disponibile. Controlla la connessione e riprova."}</p></div>`;
+      return;
+    }
+    if (state.view !== v) return;
+    window.LMU_COMPARE.render(document.getElementById("cmp"),
+      { trace: A, nick: r.nick, lap: r.best },
+      { trace: B, nick: ref.nick, lap: ref.best },
+      {
+        refKey: ref.key,
+        refIsRecord: Math.abs(ref.best - classRec) < 0.0005 && ref.cls === r.cls,
+        others: peers.map((p) => ({ key: p.key, label: `${p.nick} · ${p.car} · ${fmtLap(p.best)}` })),
+        onPickOther: (k) => { location.hash = `#confronto/${enc(r.key)}/${enc(k)}`; },
+      });
+  }
+
+  function renderReset() {
+    const d = state.data;
+    const head = viewHead("Reset classifiche", "Quando un aggiornamento di LMU cambia la fisica o il BoP");
+    if (state.mode === "demo" || d.legacy) {
+      $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${state.mode === "demo" ? "Non disponibile nella demo." : "Prima va eseguito l'aggiornamento del database (002_telemetria_reset.sql)."}</p></div>`;
+      return;
+    }
+    const classes = [...new Set(d.rows.map((r) => r.cls))].filter(Boolean).sort();
+    $app.innerHTML = head + `
+      <div class="panel reset">
+        <div class="reset-body" id="rsBody">
+          <p>Le classifiche scelte ripartono da zero. I record di adesso <b>non vengono cancellati</b>: restano consultabili dal menu <b>Classifica → Archivio</b>.</p>
+          <label>Cosa azzerare<select id="rsClass"><option value="">Tutte le classi</option>${classes.map((c) => `<option value="${esc(c)}">Solo ${esc(c)}</option>`).join("")}</select></label>
+          <label>Nome del reset<input id="rsLabel" maxlength="60" placeholder="Patch 1.3" autocomplete="off"></label>
+          <label>PIN<input id="rsPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></label>
+          <div class="rs-msg" id="rsMsg"></div>
+          <div class="rs-actions"><button class="btn" id="rsCheck">Continua</button></div>
+        </div>
+      </div>`;
+    const $msg = document.getElementById("rsMsg");
+    const say = (t, bad = true) => { $msg.textContent = t; $msg.className = "rs-msg " + (bad ? "bad" : "good"); };
+    const errText = (res) => {
+      if (res.error === "wrong_pin") return `PIN sbagliato. Tentativi rimasti: ${res.remaining}.`;
+      if (res.error === "locked") return `Troppi tentativi sbagliati: reset bloccato fino alle ${new Date(res.until).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}.`;
+      if (res.error === "no_pin") return "PIN non ancora impostato: impostalo dal SQL Editor con set_reset_pin.";
+      if (res.error === "class") return "Classe non trovata.";
+      return "Errore: riprova.";
+    };
+    const btn = document.getElementById("rsCheck");
+    btn.addEventListener("click", async () => {
+      const body = {
+        p_pin: document.getElementById("rsPin").value.trim(),
+        p_class: document.getElementById("rsClass").value || null,
+        p_label: document.getElementById("rsLabel").value.trim() || null,
+        p_confirm: false,
+      };
+      if (!/^[0-9]{6,12}$/.test(body.p_pin)) return say("Il PIN è di 6-12 cifre.");
+      btn.disabled = true;
+      say("Controllo il PIN…", false);
+      let res;
+      try { res = await source().reset(body); } catch { btn.disabled = false; return say("Server non raggiungibile."); }
+      btn.disabled = false;
+      if (!res.ok) return say(errText(res));
+      const scope = body.p_class ? `della classe ${body.p_class}` : "di tutte le classi";
+      document.getElementById("rsBody").innerHTML = `
+        <div class="rs-confirm">
+          <h2>Confermi il reset?</h2>
+          <p>Verranno archiviati <b>${res.records}</b> giri migliori ${esc(scope)}${body.p_label ? ` con il nome «${esc(body.p_label)}»` : ""}. Da adesso le classifiche ${esc(scope)} ripartono da zero.</p>
+          <div class="rs-msg" id="rsMsg2"></div>
+          <div class="rs-actions"><button class="btn danger" id="rsGo">Sì, resetta</button><a class="btn ghost" href="#">Annulla</a></div>
+        </div>`;
+      const go = document.getElementById("rsGo");
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        const $m2 = document.getElementById("rsMsg2");
+        let done;
+        try { done = await source().reset({ ...body, p_confirm: true }); } catch { go.disabled = false; $m2.textContent = "Server non raggiungibile."; $m2.className = "rs-msg bad"; return; }
+        if (!done.ok) { go.disabled = false; $m2.textContent = errText(done); $m2.className = "rs-msg bad"; return; }
+        document.getElementById("rsBody").innerHTML = `<div class="rs-confirm"><h2>Reset fatto</h2>
+          <p>Le classifiche ${esc(scope)} ripartono da zero. I ${done.records} record di prima sono nell'archivio.</p>
+          <div class="rs-actions"><a class="btn" href="#">Vai alle classifiche</a></div></div>`;
+        clearCaches();
+        state.era = null;
+        state.reloadOnHome = true; // i dati si ricaricano tornando alle classifiche
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- generale
   function renderEmpty() {
     $app.innerHTML = `
@@ -532,9 +852,12 @@
   }
 
   function render() {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === state.tab));
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", !state.view && t.dataset.tab === state.tab));
     if (!state.data) return;
-    if (state.tab === "feed") renderFeed();
+    if (state.view?.type === "giri") renderLaps();
+    else if (state.view?.type === "confronto") renderCompare();
+    else if (state.view?.type === "reset") renderReset();
+    else if (state.tab === "feed") renderFeed();
     else if (state.tab === "drivers") renderDrivers();
     else renderBoard();
   }
@@ -555,8 +878,9 @@
     if (mode === "demo") url.searchParams.set("demo", "1");
     else url.searchParams.delete("demo");
     history.replaceState(null, "", url);
-    state.history.clear();
+    clearCaches();
     state.trackId = null;
+    state.era = null;
     load();
   }
 
@@ -584,10 +908,26 @@
   }
 
   document.querySelectorAll(".tab").forEach((t) =>
-    t.addEventListener("click", () => { state.tab = t.dataset.tab; persist(); render(); })
+    t.addEventListener("click", () => {
+      state.tab = t.dataset.tab;
+      persist();
+      if (state.view) goHome();
+      else render();
+    })
   );
-  $refresh.addEventListener("click", () => { state.history.clear(); load(true); });
-  setInterval(() => { if (state.mode === "live" && document.visibilityState === "visible") load(true); }, (cfg.refreshSeconds || 60) * 1000);
+  $refresh.addEventListener("click", () => { clearCaches(); load(true); });
+  window.addEventListener("hashchange", () => {
+    parseHash();
+    window.scrollTo(0, 0);
+    if (!state.view && state.reloadOnHome) {
+      state.reloadOnHome = false;
+      state.data = null;
+      return load();
+    }
+    render();
+  });
+  parseHash();
+  setInterval(() => { if (state.mode === "live" && !state.view && document.visibilityState === "visible") load(true); }, (cfg.refreshSeconds || 60) * 1000);
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

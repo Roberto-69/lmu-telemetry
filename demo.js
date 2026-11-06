@@ -134,5 +134,79 @@
     return laps;
   }
 
-  window.LMU_DEMO = { generate };
+  // Telemetria finta del giro migliore: pista inventata (fissa per pista), stile di guida diverso per pilota.
+  // Restituisce lo stesso oggetto di LMU_COMPARE.decode().
+  function hash(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+    return h >>> 0;
+  }
+  function trace(row) {
+    const len = row.length_m || 5000;
+    const STEP = 5;
+    const tr = rng(hash("track" + row.track_id));
+    // pista: rettilinei e curve con curvatura casuale, chiusa a forza alla fine
+    const segs = [];
+    let used = 0;
+    while (used < len) {
+      const straight = 150 + tr() * 650;
+      const corner = 60 + tr() * 160;
+      const radius = (tr() < 0.75 ? 1 : -1) * (25 + tr() * 140);
+      segs.push([straight, 0], [corner, 1 / radius]);
+      used += straight + corner;
+    }
+    const k = len / used;
+    let turn = 0;
+    segs.forEach((sg) => { sg[0] *= k; turn += sg[0] * sg[1]; });
+    const fix = (2 * Math.PI) / turn;
+    segs.forEach((sg) => (sg[1] *= fix));
+    const n = Math.floor(len / STEP) + 1;
+    const curv = new Float64Array(n), corner = new Int32Array(n);
+    const x = new Float64Array(n), z = new Float64Array(n);
+    let si = 0, left = segs[0][0], h = 0, px = 0, pz = 0, cn = 0;
+    for (let i = 0; i < n; i++) {
+      while (left <= 0 && si < segs.length - 1) { si++; left += segs[si][0]; if (segs[si][1]) cn++; }
+      curv[i] = segs[si][1];
+      corner[i] = segs[si][1] ? cn : 0;
+      h += curv[i] * STEP;
+      px += Math.cos(h) * STEP; pz += Math.sin(h) * STEP;
+      x[i] = px; z[i] = pz;
+      left -= STEP;
+    }
+    for (let i = 0; i < n; i++) { x[i] -= (px * i) / n; z[i] -= (pz * i) / n; }
+    // pilota: aderenza diversa curva per curva, frenata più o meno decisa
+    const dr = rng(hash("drv" + row.driver_id + "|" + row.car_id + "|" + row.track_id));
+    const lat = [];
+    for (let c = 0; c <= cn; c++) lat.push(28 + dr() * 3.5);
+    const brakeDecel = 31 + dr() * 6;
+    const vmax = 88;
+    const v = new Float64Array(n);
+    for (let i = 0; i < n; i++) v[i] = curv[i] ? Math.min(vmax, Math.sqrt(lat[corner[i]] / Math.abs(curv[i]))) : vmax;
+    for (let i = n - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] ** 2 + 2 * brakeDecel * STEP));
+    const o = new Float64Array(n);
+    o[0] = Math.min(v[0], 70);
+    for (let i = 0; i < n - 1; i++) {
+      const acc = 11 * (1 - o[i] / 95);
+      o[i + 1] = Math.min(v[i + 1], Math.sqrt(o[i] ** 2 + 2 * acc * STEP));
+    }
+    const t = new Float64Array(n);
+    for (let i = 1; i < n; i++) t[i] = t[i - 1] + (2 * STEP) / (o[i] + o[i - 1]);
+    const scale = (row.best || row.lap_time || t[n - 1]) / (t[n - 1] + STEP / o[n - 1]);
+    const speed = new Float64Array(n), thr = new Float64Array(n), brk = new Float64Array(n);
+    const steer = new Float64Array(n), gear = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      t[i] *= scale;
+      const ms = o[i] / scale;
+      speed[i] = ms * 3.6;
+      const j = Math.min(i, n - 2);
+      const a = (o[j + 1] ** 2 - o[j] ** 2) / (2 * STEP);
+      brk[i] = a < -1 ? Math.min(1, -a / brakeDecel) : 0;
+      thr[i] = a < -1 ? 0 : a > 0.4 ? 1 : 0.5;
+      steer[i] = Math.max(-1, Math.min(1, curv[i] * 30));
+      gear[i] = Math.max(1, Math.min(7, Math.ceil(speed[i] / 45)));
+    }
+    return { n, step: STEP, t, speed, thr, brk, steer, gear, x, z };
+  }
+
+  window.LMU_DEMO = { generate, trace };
 })();
