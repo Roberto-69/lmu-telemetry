@@ -1,6 +1,6 @@
 /* LMU Telemetry - confronto della telemetria tra due giri migliori.
  * decode(): legge il formato 1 scritto dal tracker (vedi lmu_tracker/trace.py).
- * render(): mappa con microsettori, distacco lungo il giro, velocità, gas, freno.
+ * render(): mappa con microsettori, distacco lungo il giro, velocità, gas, freno, sterzo.
  */
 (function () {
   "use strict";
@@ -168,6 +168,7 @@
       { id: "v", t: "Velocità (km/h)", h: 170 },
       { id: "th", t: "Gas", h: 80 },
       { id: "b", t: "Freno", h: 80 },
+      { id: "s", t: "Sterzo · sopra destra, sotto sinistra", h: 100 },
     ];
     const X = (i) => L + ((i - r0) / Math.max(1, r1 - r0)) * (W - L - R);
     const line = (arr, lo, hi, h) => {
@@ -204,16 +205,20 @@
             <text x="${L - 6}" y="${z + 4}" text-anchor="end" class="lbl">0</text>
             <text x="${L - 6}" y="${Y(lo) - 2}" text-anchor="end" class="lbl">${lo.toFixed(2)}</text>`;
         } else {
-          const pair = c.id === "v" ? [B.speed, A.speed] : c.id === "th" ? [B.thr, A.thr] : [B.brk, A.brk];
-          let lo = 0, hi = 1.05;
+          const pair = c.id === "v" ? [B.speed, A.speed] : c.id === "th" ? [B.thr, A.thr] : c.id === "s" ? [B.steer, A.steer] : [B.brk, A.brk];
+          let lo = c.id === "s" ? -1.05 : 0, hi = 1.05;
           if (c.id === "v") {
             lo = Infinity; hi = -Infinity;
             for (let i = r0; i <= r1; i++) { lo = Math.min(lo, pair[0][i], pair[1][i]); hi = Math.max(hi, pair[0][i], pair[1][i]); }
             lo = Math.max(0, lo - 10); hi += 10;
           }
-          body = `<path d="${line(pair[0], lo, hi, c.h)}" fill="none" stroke="var(--purple)" stroke-width="1.6"/>
+          const mid = 5 + (1 - (0 - lo) / (hi - lo)) * (c.h - 10);
+          body = (c.id === "s" ? `<line x1="${L}" x2="${W - R}" y1="${mid}" y2="${mid}" stroke="var(--line-2)"/>` : "") +
+            `<path d="${line(pair[0], lo, hi, c.h)}" fill="none" stroke="var(--purple)" stroke-width="1.6"/>
             <path d="${line(pair[1], lo, hi, c.h)}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>` +
-            (c.id === "v"
+            (c.id === "s"
+              ? `<text x="${L - 6}" y="16" text-anchor="end" class="lbl">Dx</text><text x="${L - 6}" y="${mid + 4}" text-anchor="end" class="lbl">0</text><text x="${L - 6}" y="${c.h - 4}" text-anchor="end" class="lbl">Sx</text>`
+              : c.id === "v"
               ? `<text x="${L - 6}" y="16" text-anchor="end" class="lbl">${Math.round(hi)}</text><text x="${L - 6}" y="${c.h - 4}" text-anchor="end" class="lbl">${Math.round(lo)}</text>`
               : `<text x="${L - 6}" y="16" text-anchor="end" class="lbl">100%</text>`);
         }
@@ -247,9 +252,10 @@
       if (!dot) return;
       if (i === null) { dot.setAttribute("cx", -20); return; }
       dot.setAttribute("cx", mx(i)); dot.setAttribute("cy", my(i));
+      const st = (v) => (Math.abs(v) < 0.02 ? "0" : `${Math.round(Math.abs(v) * 100)}% ${v > 0 ? "dx" : "sx"}`);
       const br = A.brk[i] > 0.03 || B.brk[i] > 0.03 ? ` · freno ${Math.round(A.brk[i] * 100)}% / ${Math.round(B.brk[i] * 100)}%` : "";
       document.getElementById("cmpRead").textContent =
-        `${Math.round(i * step)} m · ${esc(me.nick)} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${esc(ref.nick)} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${br}`;
+        `${Math.round(i * step)} m · ${esc(me.nick)} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${esc(ref.nick)} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${br} · sterzo ${st(A.steer[i])} / ${st(B.steer[i])}`;
     }
 
     function select(i) {

@@ -822,7 +822,7 @@
         <button class="btn ghost sm" id="lapsPdf">Esporta PDF</button>
       </div>
       ${groups || `<div class="empty" style="padding:40px"><p>Nessun giro da mostrare.</p></div>`}
-      <p class="foot-note">Restano le ultime 10 serate di giri; il giro migliore resta per sempre.</p>`;
+      <p class="foot-note">I giri si azzerano il giorno 1 di ogni mese; il giro migliore resta per sempre.</p>`;
 
     document.getElementById("validOnly").addEventListener("change", (e) => { state.validOnly = e.target.checked; renderLaps(); });
     // PDF: la finestra di stampa del browser ("Salva come PDF"), con un foglio di stile chiaro (@media print).
