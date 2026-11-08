@@ -429,6 +429,7 @@ select, .reset input {
 }
 @media (max-width: 520px) {
   .col-fuel { display: none; }
+  .col-wear { display: none; }
   .cmp-head .mini .v { font-size: 14px; }
   .ms { grid-template-columns: 80px 1fr 58px; }
 }
@@ -459,7 +460,7 @@ select, .reset input {
   .board td, .board th { padding: 3px 8px; }
   .board tr { break-inside: avoid; }
   .board tbody tr.open, .board tbody tr.sel { background: none; }
-  .col-sec, .col-tyre, .col-fuel, .col-ideal, .col-laps, .col-when { display: table-cell !important; }
+  .col-sec, .col-tyre, .col-fuel, .col-wear, .col-ideal, .col-laps, .col-when { display: table-cell !important; }
   .time { font-size: 11px; }
   .sec, .gap { font-size: 10px; }
   .sec { color: #222; }

@@ -780,6 +780,8 @@
     }
     const valid = laps.filter((l) => l.valid);
     const avg = valid.length ? valid.reduce((a, l) => a + l.lap_time, 0) / valid.length : null;
+    const wears = laps.map(wearAvg).filter((w) => w != null);
+    const wearMean = wears.length ? wears.reduce((a, w) => a + w, 0) / wears.length : null;
 
     const groups = [...evenings.entries()].map(([day, list]) => {
       list.sort((a, b) => (a.driven_at < b.driven_at ? -1 : 1));
@@ -795,10 +797,11 @@
           return `<td class="r col-sec"><span class="sec ${g ? "green" : ""}">${fmtSec(v)}</span></td>`;
         }).join("");
         const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
+        const wear = wearAvg(l);
         const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "");
         const open = state.openLap === l.id;
         const del = l.valid && state.mode === "live" ? `<a class="btn ghost sm del" href="#cancella/${enc(l.id)}">Cancella questo giro</a>` : "";
-        const extra = open ? `<tr class="lap-ex"><td colspan="8"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";
+        const extra = open ? `<tr class="lap-ex"><td colspan="9"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";
         return `<tr class="lap-row ${l.valid ? "" : "inv"} ${open ? "open" : ""}" data-lap="${esc(l.id)}">
             <td><span class="lap-n">${l.lap_no ?? "—"}</span>${tags}</td>
             <td class="r"><span class="time ${tc}">${fmtLap(l.lap_time)}</span></td>
@@ -806,12 +809,13 @@
             ${secs}
             <td class="r col-tyre"><span class="gap">${esc(l.tyre_front || "—")}</span></td>
             <td class="r col-fuel"><span class="gap">${used == null ? "—" : used.toFixed(1) + " L"}</span></td>
+            <td class="r col-wear"><span class="gap">${wear == null ? "—" : fmtWear(wear)}</span></td>
           </tr>${extra}`;
       }).join("");
       return `<div class="panel ev">
           <div class="panel-head"><h2>${esc(eveningLabel(day))}</h2><span class="hint">${list.length} giri · migliore ${fmtLap(bestEv)}</span></div>
           <div style="overflow-x:auto"><table class="board laps">
-            <thead><tr><th>Giro</th><th class="r">Tempo</th><th class="r">Distacco</th><th class="r col-sec">S1</th><th class="r col-sec">S2</th><th class="r col-sec">S3</th><th class="r col-tyre">Gomme</th><th class="r col-fuel">Benzina</th></tr></thead>
+            <thead><tr><th>Giro</th><th class="r">Tempo</th><th class="r">Distacco</th><th class="r col-sec">S1</th><th class="r col-sec">S2</th><th class="r col-sec">S3</th><th class="r col-tyre">Gomme</th><th class="r col-fuel">Benzina</th><th class="r col-wear" title="Gomma consumata nel giro, media delle 4 gomme">Usura</th></tr></thead>
             <tbody>${rowsHtml}</tbody></table></div></div>`;
     }).join("");
 
@@ -823,6 +827,7 @@
         <div class="mini"><div class="k">Giro migliore</div><div class="v" style="color:var(--purple)">${fmtLap(r.best)}</div></div>
         <div class="mini"><div class="k">Giri</div><div class="v">${laps.length}</div></div>
         <div class="mini"><div class="k">Media validi</div><div class="v">${fmtLap(avg)}</div></div>
+        ${wearMean != null ? `<div class="mini"><div class="k">Usura media al giro</div><div class="v">${fmtWear(wearMean)}</div></div>` : ""}
         <div class="mini"><div class="k">Serate</div><div class="v">${new Set(laps.map((l) => eveningOf(l.driven_at))).size}</div></div>
       </div>
       <div class="filters">
@@ -852,14 +857,27 @@
     }));
   }
 
+  // Usura gomme del giro: array di 4 percentuali (ant. sx, ant. dx, post. sx, post. dx)
+  function wearList(l) {
+    const w = Array.isArray(l.tyre_wear) ? l.tyre_wear.map(num) : null;
+    return w && w.length === 4 && w.every((x) => x != null && isFinite(x)) ? w : null;
+  }
+  function wearAvg(l) {
+    const w = wearList(l);
+    return w ? (w[0] + w[1] + w[2] + w[3]) / 4 : null;
+  }
+  const fmtWear = (x) => (x < 1 ? x.toFixed(2) : x.toFixed(1)) + "%";
+
   function lapChips(l) {
     const used = (a, b, f) => (a != null && b != null ? f(a, b) : null);
+    const w = wearList(l);
     return [
       `<span class="chip">${esc(SESSION_IT[l.session_type] || l.session_type || "")}${l.online ? " · online" : ""}</span>`,
       `<span class="chip">Ora <b>${new Date(l.driven_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}</b></span>`,
       l.tyre_front && `<span class="chip">Gomme <b>${esc(l.tyre_front)}${l.tyre_rear && l.tyre_rear !== l.tyre_front ? " / " + esc(l.tyre_rear) : ""}</b></span>`,
       l.fuel_start != null && `<span class="chip">Benzina <b>${num(l.fuel_start).toFixed(1)} → ${l.fuel_end != null ? num(l.fuel_end).toFixed(1) : "—"} L</b></span>`,
       l.ve_start ? `<span class="chip">Energia <b>${pct(num(l.ve_start))} → ${pct(num(l.ve_end))}</b>${used(l.ve_start, l.ve_end, (a, b) => ` (−${((a - b) * 100).toFixed(1)}%)`) || ""}</span>` : "",
+      w && `<span class="chip">Usura gomme <b>AS ${fmtWear(w[0])} · AD ${fmtWear(w[1])} · PS ${fmtWear(w[2])} · PD ${fmtWear(w[3])}</b></span>`,
       l.stint_lap != null && `<span class="chip">Giro stint <b>${l.stint_lap}</b></span>`,
       (l.tc != null || l.abs != null) && `<span class="chip">TC <b>${l.tc ?? "—"}</b> ABS <b>${l.abs ?? "—"}</b></span>`,
       l.track_temp != null && `<span class="chip">Pista <b>${Math.round(l.track_temp)}°C</b> Aria <b>${l.air_temp != null ? Math.round(l.air_temp) : "—"}°C</b></span>`,

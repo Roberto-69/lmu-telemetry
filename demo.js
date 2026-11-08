@@ -119,6 +119,7 @@
                 ve_start: Math.round(ve * 1000) / 1000,
                 tyre_front: tyre,
                 tyre_rear: tyre,
+                tyre_wear: pit ? null : [0, 1, 2, 3].map((i) => Math.round(t.len / 1000 * (i < 2 ? 0.16 : 0.12) * (0.85 + r() * 0.3) * 1000) / 1000),
                 air_temp: temp - 8,
                 track_temp: temp,
                 grip_level: Math.min(4, 1 + Math.floor(n / 4)),
