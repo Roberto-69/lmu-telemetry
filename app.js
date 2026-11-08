@@ -2,7 +2,8 @@
  * Dati: viste Supabase v_pb (giri migliori), v_pb_archive, v_laps, tabella lap_traces (telemetria),
  * funzione reset_leaderboards (con PIN). Solo lettura con chiave publishable, tranne il reset.
  * Se il database non è ancora aggiornato (002_telemetria_reset.sql) usa le viste di prima, senza telemetria.
- * Pagine: #giri/<chiave> lista giri, #confronto/<chiave>[/<chiave>] telemetria, #reset.
+ * Pagine: #giri/<chiave> lista giri, #confronto/<chiave>[/<chiave>] telemetria, #reset,
+ * #cancella/<id giro> cancella un tempo (con il PIN del reset).
  * Demo: ?demo=1 oppure pulsante, con dati generati da demo.js.
  */
 (function () {
@@ -173,6 +174,9 @@
     reset(body) {
       return rpc("reset_leaderboards", body);
     },
+    deleteLap(body) {
+      return rpc("delete_lap", body);
+    },
   };
 
   let demoLaps = null;
@@ -195,6 +199,9 @@
       return window.LMU_DEMO.trace({ track_id: r.track_id, driver_id: r.driver_id, car_id: r.car_id, length_m: r.lap.length, best: r.best });
     },
     async reset() {
+      return { ok: false, error: "demo" };
+    },
+    async deleteLap() {
       return { ok: false, error: "demo" };
     },
   };
@@ -698,7 +705,7 @@
   // ---------------------------------------------------------------- pagine (#giri, #confronto, #reset)
   function parseHash() {
     const [type, a, b] = decodeURIComponent(location.hash.slice(1)).split("/");
-    state.view = ["giri", "confronto", "reset"].includes(type) ? { type, key: a || null, ref: b || null } : null;
+    state.view = ["giri", "confronto", "reset", "cancella"].includes(type) ? { type, key: a || null, ref: b || null } : null;
     state.openLap = null;
   }
   function goHome() {
@@ -731,7 +738,8 @@
     if (!r.hasTrace) tel = `<span class="d-note">Telemetria: arriva con il prossimo record personale</span>`;
     else if (!peers.length) tel = `<span class="d-note">Telemetria pronta: manca un altro pilota con cui confrontarla</span>`;
     else tel = `<a class="btn sm" href="#confronto/${enc(r.key)}">Confronta telemetria</a>`;
-    return `<div class="d-actions">${lapsBtn}${tel}</div>`;
+    const del = state.mode === "live" && r.lapId != null ? `<a class="btn ghost sm del" href="#cancella/${enc(r.lapId)}">Cancella tempo</a>` : "";
+    return `<div class="d-actions">${lapsBtn}${tel}${del}</div>`;
   }
 
   function viewHead(title, sub) {
@@ -789,7 +797,8 @@
         const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
         const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "");
         const open = state.openLap === l.id;
-        const extra = open ? `<tr class="lap-ex"><td colspan="8"><div class="chips">${lapChips(l)}</div></td></tr>` : "";
+        const del = l.valid && state.mode === "live" ? `<a class="btn ghost sm del" href="#cancella/${enc(l.id)}">Cancella questo giro</a>` : "";
+        const extra = open ? `<tr class="lap-ex"><td colspan="8"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";
         return `<tr class="lap-row ${l.valid ? "" : "inv"} ${open ? "open" : ""}" data-lap="${esc(l.id)}">
             <td><span class="lap-n">${l.lap_no ?? "—"}</span>${tags}</td>
             <td class="r"><span class="time ${tc}">${fmtLap(l.lap_time)}</span></td>
@@ -968,6 +977,81 @@
     });
   }
 
+  // Cancella un giro preciso: il server lo segna "non valido"; se era il migliore sale il migliore rimasto
+  function pinErrText(res) {
+    if (res.error === "wrong_pin") return `PIN sbagliato. Tentativi rimasti: ${res.remaining}.`;
+    if (res.error === "locked") return `Troppi tentativi sbagliati: bloccato fino alle ${new Date(res.until).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" })}.`;
+    if (res.error === "no_pin") return "PIN non ancora impostato: impostalo dal SQL Editor con set_reset_pin.";
+    if (res.error === "missing") return "Giro non trovato (forse è già stato cancellato).";
+    if (res.error === "not_valid") return "Questo giro è già non valido: non è in classifica.";
+    if (res.error === "demo") return "Non disponibile nella demo.";
+    return "Errore: riprova.";
+  }
+
+  function renderDelete() {
+    const lapId = Number(state.view.key);
+    const head = viewHead("Cancella tempo", "Per togliere un tempo sbagliato dalla classifica");
+    if (state.mode === "demo" || state.data.legacy || !Number.isFinite(lapId)) {
+      $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${state.mode === "demo" ? "Non disponibile nella demo." : "Non disponibile."}</p></div>`;
+      return;
+    }
+    const r = state.data.rows.find((x) => x.lapId === lapId);
+    const what = r ? `il tempo <b>${fmtLap(r.best)}</b> di <b>${esc(r.nick)}</b> (${esc(r.track)} · ${esc(r.car)})` : "questo giro";
+    $app.innerHTML = head + `
+      <div class="panel reset">
+        <div class="reset-body" id="dlBody">
+          <p>Stai per cancellare ${what}. Il giro diventa <b>non valido</b>: se era il giro migliore, al suo posto sale il miglior giro rimasto del pilota.</p>
+          <label>PIN (lo stesso del reset)<input id="dlPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off"></label>
+          <div class="rs-msg" id="dlMsg"></div>
+          <div class="rs-actions"><button class="btn" id="dlCheck">Continua</button><a class="btn ghost" href="#">Annulla</a></div>
+        </div>
+      </div>`;
+    const $msg = document.getElementById("dlMsg");
+    const say = (t, bad = true) => { $msg.textContent = t; $msg.className = "rs-msg " + (bad ? "bad" : "good"); };
+    const btn = document.getElementById("dlCheck");
+    const $pin = document.getElementById("dlPin");
+    $pin.focus();
+    $pin.addEventListener("keydown", (e) => { if (e.key === "Enter") btn.click(); });
+    btn.addEventListener("click", async () => {
+      const body = { p_pin: $pin.value.trim(), p_lap_id: lapId, p_confirm: false };
+      if (!/^[0-9]{6,12}$/.test(body.p_pin)) return say("Il PIN è di 6-12 cifre.");
+      btn.disabled = true;
+      say("Controllo il PIN…", false);
+      let res;
+      try { res = await source().deleteLap(body); } catch (e) { btn.disabled = false; return say(/HTTP 404/.test(e.message) ? "Prima va eseguito l'aggiornamento del database (004_cancella_tempi.sql)." : "Server non raggiungibile."); }
+      btn.disabled = false;
+      if (!res.ok) return say(pinErrText(res));
+      const when = new Date(res.driven_at).toLocaleString("it-IT", { dateStyle: "medium", timeStyle: "short" });
+      const after = !res.is_best
+        ? "Non è il giro migliore: il tempo in classifica non cambia."
+        : res.next != null
+          ? `In classifica al suo posto va il suo miglior giro rimasto: <b>${fmtLap(num(res.next))}</b>.`
+          : "Non ha altri giri validi: esce da questa classifica.";
+      document.getElementById("dlBody").innerHTML = `
+        <div class="rs-confirm">
+          <h2>Confermi?</h2>
+          <p>Cancello il giro <b>${fmtLap(num(res.lap_time))}</b> di <b>${esc(res.nick)}</b> · ${esc(res.track)} · ${esc(res.car)} · ${esc(when)}.</p>
+          <p>${after}</p>
+          <div class="rs-msg" id="dlMsg2"></div>
+          <div class="rs-actions"><button class="btn danger" id="dlGo">Sì, cancella</button><a class="btn ghost" href="#">Annulla</a></div>
+        </div>`;
+      const go = document.getElementById("dlGo");
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        const $m2 = document.getElementById("dlMsg2");
+        let done;
+        try { done = await source().deleteLap({ ...body, p_confirm: true }); } catch { go.disabled = false; $m2.textContent = "Server non raggiungibile."; $m2.className = "rs-msg bad"; return; }
+        if (!done.ok) { go.disabled = false; $m2.textContent = pinErrText(done); $m2.className = "rs-msg bad"; return; }
+        const msg = done.removed ? "Il pilota esce da questa classifica." : done.new_best != null ? `Nuovo giro migliore del pilota: ${fmtLap(num(done.new_best))}.` : "La classifica è aggiornata.";
+        document.getElementById("dlBody").innerHTML = `<div class="rs-confirm"><h2>Tempo cancellato</h2>
+          <p>${esc(msg)}</p>
+          <div class="rs-actions"><a class="btn" href="#">Vai alle classifiche</a></div></div>`;
+        clearCaches();
+        state.reloadOnHome = true; // i dati si ricaricano tornando alle classifiche
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- generale
   function renderEmpty() {
     $app.innerHTML = `
@@ -986,6 +1070,7 @@
     if (state.view?.type === "giri") renderLaps();
     else if (state.view?.type === "confronto") renderCompare();
     else if (state.view?.type === "reset") renderReset();
+    else if (state.view?.type === "cancella") renderDelete();
     else if (state.tab === "feed") renderFeed();
     else if (state.tab === "drivers") renderDrivers();
     else renderBoard();
