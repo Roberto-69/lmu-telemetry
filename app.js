@@ -375,11 +375,14 @@
       .map(([v, label]) => `<button data-cls="${v}" class="${state.cls === v ? "active" : ""}" ${v !== "all" && !classesHere.has(v) ? "disabled title='Nessun tempo su questa pista'" : ""}>${v !== "all" ? `<span class="dot ${v}"></span>` : ""}${esc(label)}</button>`)
       .join("");
 
+    // Il viola va sul settore più veloce tra quelli mostrati (giri migliori): il miglior settore
+    // assoluto (bestSec) può venire da un altro giro e allora non comparirebbe mai in tabella.
+    const shownBest = [0, 1, 2].map((i) => Math.min(...rows.map((r) => r.lap.s[i] ?? Infinity)));
     const body = rows.map((r, i) => {
       const gap = i === 0 ? null : r.best - leader.best;
       const secs = r.lap.s.map((s, si) => {
         let c = "";
-        if (s != null && Math.abs(s - bestSec[si]) < 0.0005) c = "purple";
+        if (s != null && Math.abs(s - shownBest[si]) < 0.0005) c = "purple";
         else if (s != null && r.pbS[si] != null && Math.abs(s - r.pbS[si]) < 0.0005) c = "green";
         return `<td class="r col-sec"><span class="sec ${c}">${fmtSec(s)}</span></td>`;
       }).join("");
