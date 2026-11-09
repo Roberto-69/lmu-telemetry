@@ -430,6 +430,15 @@ select, .reset input {
 .rs-confirm { display: grid; gap: 14px; }
 .rs-confirm h2 { margin: 0; font-size: 20px; }
 
+/* computer: le tre schede alla stessa altezza, la mappa riempie la sua, i microsettori scorrono dentro */
+@media (min-width: 1201px) {
+  .cmp-top { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.8fr); align-items: stretch; }
+  .cmp-map { display: flex; flex-direction: column; }
+  .cmp-map svg { flex: 1 1 auto; min-height: 0; }
+  .cmp-ms { display: flex; flex-direction: column; }
+  .cmp-ms #cmpList { flex: 1 1 auto; min-height: 0; max-height: none; contain: size; }
+  .cmp-ms .ms { grid-template-columns: 74px 1fr 56px; gap: 8px; }
+}
 @media (max-width: 1200px) {
   .cmp-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .cmp-ms { grid-column: 1 / -1; }
