@@ -162,7 +162,7 @@
     const fix = (2 * Math.PI) / turn;
     segs.forEach((sg) => (sg[1] *= fix));
     const n = Math.floor(len / STEP) + 1;
-    const curv = new Float64Array(n), corner = new Int32Array(n);
+    const curv = new Float64Array(n), corner = new Int32Array(n), head = new Float64Array(n);
     const x = new Float64Array(n), z = new Float64Array(n);
     let si = 0, left = segs[0][0], h = 0, px = 0, pz = 0, cn = 0;
     for (let i = 0; i < n; i++) {
@@ -170,6 +170,7 @@
       curv[i] = segs[si][1];
       corner[i] = segs[si][1] ? cn : 0;
       h += curv[i] * STEP;
+      head[i] = h;
       px += Math.cos(h) * STEP; pz += Math.sin(h) * STEP;
       x[i] = px; z[i] = pz;
       left -= STEP;
@@ -177,6 +178,24 @@
     for (let i = 0; i < n; i++) { x[i] -= (px * i) / n; z[i] -= (pz * i) / n; }
     // pilota: aderenza diversa curva per curva, frenata più o meno decisa
     const dr = rng(hash("drv" + row.driver_id + "|" + row.car_id + "|" + row.track_id));
+    // traiettoria: largo in ingresso e uscita, dentro a centro curva; ogni pilota taglia in modo diverso
+    const avg = (w) => {
+      const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let s = 0;
+        for (let j = -w; j <= w; j++) s += curv[(i + j + n) % n];
+        out[i] = s / (2 * w + 1);
+      }
+      return out;
+    };
+    const narrow = avg(Math.round(4 + dr() * 4)), wide = avg(Math.round(18 + dr() * 10));
+    const cut = 500 + dr() * 500, shift = Math.round((dr() - 0.5) * 6);
+    for (let i = 0; i < n; i++) {
+      const j = (i + shift + n) % n;
+      const off = 5.5 * Math.tanh((narrow[j] - wide[j]) * cut);
+      x[i] += -Math.sin(head[i]) * off;
+      z[i] += Math.cos(head[i]) * off;
+    }
     const lat = [];
     for (let c = 0; c <= cn; c++) lat.push(28 + dr() * 3.5);
     const brakeDecel = 31 + dr() * 6;

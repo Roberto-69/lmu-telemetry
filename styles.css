@@ -379,9 +379,22 @@ select, .reset input {
 .sw.me { background: var(--accent); }
 .sw.ref { background: var(--purple); }
 .sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
-.cmp-top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cmp-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 0.9fr); gap: 14px; align-items: start; }
 .cmp-map { padding: 10px; }
-.cmp-map svg { width: 100%; height: auto; display: block; }
+.cmp-map svg { width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; user-select: none; }
+.cmp-traj svg { user-select: none; }
+.cmp-traj .panel-head { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+.cmp-traj svg { width: 100%; aspect-ratio: 4 / 3; display: block; touch-action: none; cursor: grab; background: var(--bg-2); }
+.cmp-traj svg:active { cursor: grabbing; }
+.traj-tools { display: flex; align-items: center; gap: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
+.seg button { background: none; border: 0; color: var(--muted); padding: 4px 9px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.seg button.on { background: var(--surface-2); color: var(--text); }
+.zbtn { width: 28px; height: 26px; border: 1px solid var(--line-2); border-radius: 8px; background: none; color: var(--text); font-weight: 700; cursor: pointer; }
+.zbtn:hover, .seg button:hover { color: var(--text); }
+.traj-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px 10px; color: var(--muted); font-size: 12px; }
+.traj-leg .sw { margin-right: 6px; }
+.traj-note { color: var(--faint); margin-left: auto; }
 .cmp-num { fill: var(--muted); font: 700 12px var(--mono); }
 .cmp-ms #cmpList { padding: 6px; max-height: 340px; overflow-y: auto; }
 .ms {
@@ -417,6 +430,10 @@ select, .reset input {
 .rs-confirm { display: grid; gap: 14px; }
 .rs-confirm h2 { margin: 0; font-size: 20px; }
 
+@media (max-width: 1200px) {
+  .cmp-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .cmp-ms { grid-column: 1 / -1; }
+}
 @media (max-width: 900px) {
   .cmp-top { grid-template-columns: minmax(0, 1fr); }
   .cmp-head { grid-template-columns: repeat(3, minmax(0, 1fr)); }

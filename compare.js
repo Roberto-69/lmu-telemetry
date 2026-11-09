@@ -107,8 +107,15 @@
       return s.join(" ");
     };
 
-    let sel = null, r0 = 0, r1 = n - 1;
+    let sel = null, r0 = 0, r1 = n - 1, cur = 0;
     const others = opts.others || [];
+
+    // traiettoria: vista ingrandita in metri (X = x, Y = -z), linea di mezzo tra i due giri per la fascia della pista
+    const TW = 400, TH = 300, TRACK_W = 13;
+    const midX = (i) => (A.x[i] + B.x[i]) / 2, midY = (i) => -(A.z[i] + B.z[i]) / 2;
+    let tv = { cx: 0, cy: 0, w: 160 }, tmode = "drv";
+    const ZOOMS = [50, 80, 120, 160, 240, 360, 540, 800];
+    const circ = (a, b) => { const d = Math.abs(a - b); return Math.min(d, n - d); };
 
     el.innerHTML = `
       <div class="cmp-head">
@@ -119,12 +126,22 @@
       </div>
       <div class="cmp-top">
         <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}"></svg></div>
+        <div class="panel cmp-traj">
+          <div class="panel-head"><h2>Traiettoria</h2>
+            <div class="traj-tools">
+              <span class="seg"><button data-c="drv" class="on">Piloti</button><button data-c="ped">Gas/freno</button></span>
+              <button class="zbtn" data-z="1" aria-label="Allontana">−</button><button class="zbtn" data-z="-1" aria-label="Avvicina">+</button>
+            </div>
+          </div>
+          <svg id="cmpTraj" viewBox="0 0 ${TW} ${TH}" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="traj-leg" id="trajLeg"></div>
+        </div>
         <div class="panel cmp-ms">
           <div class="panel-head"><h2>Microsettori</h2><span class="hint">tocca per ingrandire</span></div>
           <div id="cmpList"></div>
         </div>
       </div>
-      <div class="cmp-readout" id="cmpRead">Passa sul grafico (o tocca) per leggere i valori</div>
+      <div class="cmp-readout" id="cmpRead">Passa sul grafico o trascina il pallino sulla pista per leggere i valori</div>
       <div class="panel cmp-charts" id="cmpCharts"></div>
       <div class="cmp-legend"><span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span><span><i class="sq" style="background:var(--green)"></i>guadagni</span><span><i class="sq" style="background:var(--red)"></i>perdi</span></div>`;
 
@@ -141,10 +158,151 @@
         s += `<text x="${(mx(m.apex) + 9).toFixed(1)}" y="${(my(m.apex) - 7).toFixed(1)}" class="cmp-num">${i + 1}</text>`;
       });
       s += `<rect x="${(mx(0) - 2).toFixed(1)}" y="${(my(0) - 9).toFixed(1)}" width="4" height="18" fill="var(--text)"/>`;
-      s += `<circle id="cmpDot" r="6" cx="-20" cy="-20" fill="var(--accent)" stroke="var(--bg)" stroke-width="2"/>`;
-      const svg = document.getElementById("cmpMap");
-      svg.innerHTML = s;
-      svg.querySelectorAll("polyline[data-i]").forEach((p) => p.addEventListener("click", () => select(+p.dataset.i)));
+      s += `<rect id="cmpView" fill="none" stroke="var(--text)" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>`;
+      s += `<circle id="cmpDot" r="6" cx="${mx(cur).toFixed(1)}" cy="${my(cur).toFixed(1)}" fill="var(--accent)" stroke="var(--bg)" stroke-width="2"/>`;
+      document.getElementById("cmpMap").innerHTML = s;
+      showViewBox();
+    }
+
+    // ---- traiettoria
+    function drawTraj() {
+      const pts2 = (fx, fy, a, b) => {
+        let s = "";
+        for (let i = a; i <= b; i++) s += fx(i).toFixed(2) + "," + fy(i).toFixed(2) + " ";
+        return s;
+      };
+      const ax = (i) => A.x[i], ay = (i) => -A.z[i], bx = (i) => B.x[i], by = (i) => -B.z[i];
+      const ln = `fill="none" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"`;
+      let s = `<polyline points="${pts2(midX, midY, 0, n - 1)}" fill="none" stroke="var(--line-2)" stroke-width="${TRACK_W + 0.8}" stroke-linejoin="round"/>
+        <polyline points="${pts2(midX, midY, 0, n - 1)}" fill="none" stroke="var(--surface-2)" stroke-width="${TRACK_W}" stroke-linejoin="round"/>
+        <rect x="${(midX(0) - 0.6).toFixed(2)}" y="${(midY(0) - TRACK_W / 2).toFixed(2)}" width="1.2" height="${TRACK_W}" fill="var(--text)" opacity="0.6"
+          transform="rotate(${((Math.atan2(midY(1) - midY(0), midX(1) - midX(0)) * 180) / Math.PI).toFixed(1)} ${midX(0).toFixed(2)} ${midY(0).toFixed(2)})"/>`;
+      if (tmode === "drv") {
+        s += `<polyline points="${pts2(bx, by, 0, n - 1)}" stroke="var(--purple)" stroke-width="2.4" ${ln}/>
+          <polyline points="${pts2(ax, ay, 0, n - 1)}" stroke="var(--accent)" stroke-width="2.4" ${ln}/>`;
+      } else {
+        // verde gas pieno, rosso freno, bianco rilascio o gas parziale; il riferimento è tratteggiato
+        const cat = (T, i) => (T.brk[i] > 0.05 ? 2 : T.thr[i] >= 0.95 ? 0 : 1);
+        const PC = ["var(--green)", "#e8ecf3", "var(--red)"];
+        const runs = (T, fx, fy, extra) => {
+          let out = "", a = 0;
+          for (let i = 1; i <= n; i++) {
+            if (i < n && cat(T, i) === cat(T, a)) continue;
+            out += `<polyline points="${pts2(fx, fy, a, Math.min(i, n - 1))}" stroke="${PC[cat(T, a)]}" ${extra} ${ln}/>`;
+            a = i;
+          }
+          return out;
+        };
+        s += runs(B, bx, by, `stroke-width="2" stroke-dasharray="5 4"`) + runs(A, ax, ay, `stroke-width="2.6"`);
+      }
+      s += `<circle id="trajRef" fill="var(--purple)" stroke="var(--bg)"/><circle id="trajMe" fill="var(--accent)" stroke="var(--bg)"/>`;
+      document.getElementById("cmpTraj").innerHTML = s;
+      document.getElementById("trajLeg").innerHTML = tmode === "drv"
+        ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span><span class="traj-note">bordi pista indicativi</span>`
+        : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>linea piena ${esc(me.nick)}, tratteggio ${esc(ref.nick)}</span>`;
+      setView(tv.cx, tv.cy, tv.w);
+      placeDots();
+    }
+
+    function setView(cx, cy, w) {
+      tv = { cx, cy, w };
+      const h = (w * TH) / TW;
+      const svg = document.getElementById("cmpTraj");
+      svg.setAttribute("viewBox", `${(cx - w / 2).toFixed(2)} ${(cy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
+      const r = (w / TW) * 6;
+      for (const id of ["trajMe", "trajRef"]) {
+        const c = document.getElementById(id);
+        if (c) { c.setAttribute("r", (id === "trajMe" ? r : r * 0.8).toFixed(2)); c.setAttribute("stroke-width", (r / 3).toFixed(2)); }
+      }
+      showViewBox();
+    }
+
+    // riquadro tratteggiato sulla mappa intera: la zona mostrata nella traiettoria
+    function showViewBox() {
+      const rc = document.getElementById("cmpView");
+      if (!rc) return;
+      const h = (tv.w * TH) / TW;
+      rc.setAttribute("x", (ox + (tv.cx - tv.w / 2 - mnx) * k).toFixed(1));
+      rc.setAttribute("y", (oy + (mxz + tv.cy - h / 2) * k).toFixed(1));
+      rc.setAttribute("width", Math.max(2, tv.w * k).toFixed(1));
+      rc.setAttribute("height", Math.max(2, h * k).toFixed(1));
+    }
+
+    function placeDots() {
+      const set = (id, x, y) => { const c = document.getElementById(id); if (c) { c.setAttribute("cx", x.toFixed(2)); c.setAttribute("cy", y.toFixed(2)); } };
+      set("trajMe", A.x[cur], -A.z[cur]);
+      set("trajRef", B.x[cur], -B.z[cur]);
+      set("cmpDot", mx(cur), my(cur));
+    }
+
+    // la vista segue il pallino quando esce dalla parte centrale
+    function follow(margin) {
+      const h = (tv.w * TH) / TW, x = midX(cur), y = midY(cur);
+      if (Math.abs(x - tv.cx) > (tv.w / 2) * margin || Math.abs(y - tv.cy) > (h / 2) * margin) setView(x, y, tv.w);
+    }
+
+    function fitRange(a, b) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (let i = a; i <= b; i++) { x0 = Math.min(x0, midX(i)); x1 = Math.max(x1, midX(i)); y0 = Math.min(y0, midY(i)); y1 = Math.max(y1, midY(i)); }
+      const w = Math.max(50, Math.max(x1 - x0, ((y1 - y0) * TW) / TH) * 1.2 + TRACK_W);
+      setView((x0 + x1) / 2, (y0 + y1) / 2, w);
+    }
+
+    // punto della pista più vicino al dito; a parità preferisce i punti vicini al pallino (tornanti, incroci)
+    function nearest(fx, fy, px, py, penalty) {
+      let best = cur, bc = Infinity;
+      for (let i = 0; i < n; i++) {
+        const dx = fx(i) - px, dy = fy(i) - py, p = circ(i, cur) * penalty;
+        const c = dx * dx + dy * dy + p * p;
+        if (c < bc) { bc = c; best = i; }
+      }
+      return best;
+    }
+
+    // trascinamento su un svg: tocco breve senza movimento = onTap, altrimenti scorre lungo la pista
+    function scrub(svg, toIndex, onTap) {
+      let down = null;
+      const at = (e) => {
+        const p = svg.createSVGPoint();
+        p.x = e.clientX; p.y = e.clientY;
+        return p.matrixTransform(svg.getScreenCTM().inverse());
+      };
+      svg.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); // niente selezione del testo né scorrimento della pagina durante il trascinamento
+        down = { x: e.clientX, y: e.clientY, moved: false, target: e.target };
+        svg.setPointerCapture(e.pointerId);
+      });
+      svg.addEventListener("pointermove", (e) => {
+        if (!down) return;
+        if (!down.moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) return;
+        down.moved = true;
+        const p = at(e);
+        hover(toIndex(p.x, p.y), "drag");
+      });
+      const up = (e) => {
+        if (down && !down.moved && !(onTap && onTap(down.target))) { const p = at(e); hover(toIndex(p.x, p.y), "drag"); }
+        down = null;
+      };
+      svg.addEventListener("pointerup", up);
+      svg.addEventListener("pointercancel", () => (down = null));
+    }
+
+    // distanza tra le due linee nel punto: più interna / più esterna in curva
+    function lateral(i) {
+      let bd = Infinity, side = 0, bj = i;
+      for (let j = Math.max(0, i - 15); j < Math.min(n - 1, i + 15); j++) {
+        const dx = B.x[j + 1] - B.x[j], dz = B.z[j + 1] - B.z[j], L2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((A.x[i] - B.x[j]) * dx + (A.z[i] - B.z[j]) * dz) / L2));
+        const vx = A.x[i] - (B.x[j] + t * dx), vz = A.z[i] - (B.z[j] + t * dz), d = Math.hypot(vx, vz);
+        if (d < bd) { bd = d; side = Math.sign(dx * vz - dz * vx); bj = j; }
+      }
+      if (bd < 0.3) return "stessa linea";
+      const j0 = Math.max(0, bj - 4), j1 = Math.min(n - 1, bj + 4);
+      const h1x = B.x[bj] - B.x[j0], h1z = B.z[bj] - B.z[j0], h2x = B.x[j1] - B.x[bj], h2z = B.z[j1] - B.z[bj];
+      const turn = Math.asin(Math.max(-1, Math.min(1, (h1x * h2z - h1z * h2x) / ((Math.hypot(h1x, h1z) * Math.hypot(h2x, h2z)) || 1))));
+      const curv = turn / Math.max(1, (j1 - j0) * step * 0.5);
+      if (Math.abs(curv) < 1 / 400) return `${bd.toFixed(1)} m di lato`;
+      return `${bd.toFixed(1)} m più ${side === Math.sign(curv) ? "interna" : "esterna"}`;
     }
 
     function drawList() {
@@ -239,23 +397,26 @@
         };
         s.addEventListener("pointermove", move);
         s.addEventListener("pointerdown", move);
-        s.addEventListener("pointerleave", () => hover(null));
       });
+      hover(cur, "init");
     }
 
-    function hover(i) {
+    // src: "chart" (cursore sui grafici), "drag" (pallino sulla pista), "init"
+    function hover(i, src = "chart") {
+      if (i == null) return;
+      cur = i;
+      if (sel !== null && (i < r0 || i > r1)) { sel = null; r0 = 0; r1 = n - 1; drawMap(); drawList(); drawCharts(); }
       document.querySelectorAll("#cmpCharts .cur").forEach((l) => {
-        const xx = i === null ? -5 : X(i);
+        const xx = X(i);
         l.setAttribute("x1", xx); l.setAttribute("x2", xx);
       });
-      const dot = document.getElementById("cmpDot");
-      if (!dot) return;
-      if (i === null) { dot.setAttribute("cx", -20); return; }
-      dot.setAttribute("cx", mx(i)); dot.setAttribute("cy", my(i));
+      placeDots();
+      if (src === "chart") follow(0.6);
+      else if (src === "drag") follow(0.92);
       const st = (v) => (Math.abs(v) < 0.02 ? "0" : `${Math.round(Math.abs(v) * 100)}% ${v > 0 ? "dx" : "sx"}`);
       const br = A.brk[i] > 0.03 || B.brk[i] > 0.03 ? ` · freno ${Math.round(A.brk[i] * 100)}% / ${Math.round(B.brk[i] * 100)}%` : "";
       document.getElementById("cmpRead").textContent =
-        `${Math.round(i * step)} m · ${esc(me.nick)} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${esc(ref.nick)} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${br} · sterzo ${st(A.steer[i])} / ${st(B.steer[i])}`;
+        `${Math.round(i * step)} m · ${me.nick} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${ref.nick} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${br} · sterzo ${st(A.steer[i])} / ${st(B.steer[i])} · linea ${me.nick}: ${lateral(i)}`;
     }
 
     function select(i) {
@@ -265,11 +426,33 @@
         const m = MS[sel];
         r0 = Math.max(0, m.a - Math.round(60 / step));
         r1 = Math.min(n - 1, m.b + Math.round(20 / step));
+        cur = m.apex ?? Math.round((m.a + m.b) / 2);
+        fitRange(m.a, m.b);
       }
       drawMap(); drawList(); drawCharts();
     }
 
-    drawMap(); drawList(); drawCharts();
+    // partenza: la curva dove si perde di più, già ingrandita
+    const worst = MS.reduce((w, m) => (m.g > w.g ? m : w), MS[0]);
+    cur = worst.apex ?? Math.round((worst.a + worst.b) / 2);
+    fitRange(Math.max(0, cur - Math.round(120 / step)), Math.min(n - 1, cur + Math.round(120 / step)));
+    drawMap(); drawTraj(); drawList(); drawCharts();
+
+    scrub(document.getElementById("cmpMap"), (px, py) => nearest(mx, my, px, py, step * k * 0.05),
+      (t) => { if (t.dataset && t.dataset.i != null) { select(+t.dataset.i); return true; } return false; });
+    scrub(document.getElementById("cmpTraj"), (px, py) => nearest(midX, midY, px, py, step * 0.1));
+    el.querySelectorAll(".cmp-traj .seg button").forEach((b) => b.addEventListener("click", () => {
+      tmode = b.dataset.c;
+      el.querySelectorAll(".cmp-traj .seg button").forEach((x) => x.classList.toggle("on", x === b));
+      drawTraj();
+    }));
+    el.querySelectorAll(".cmp-traj .zbtn").forEach((b) => b.addEventListener("click", () => {
+      let z = ZOOMS.findIndex((w) => w >= tv.w - 0.5);
+      if (z < 0) z = ZOOMS.length - 1;
+      else if (ZOOMS[z] > tv.w + 0.5 && +b.dataset.z > 0) z--; // da una vista "su misura" il primo − porta al livello sopra
+      z = Math.max(0, Math.min(ZOOMS.length - 1, z + +b.dataset.z));
+      setView(midX(cur), midY(cur), ZOOMS[z]);
+    }));
     let lastW = el.clientWidth;
     const onResize = () => {
       if (!document.body.contains(el) || !document.getElementById("cmpCharts")) return window.removeEventListener("resize", onResize);
