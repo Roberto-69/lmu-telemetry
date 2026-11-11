@@ -125,7 +125,8 @@
         ${others.length ? `<label class="cmp-pick"><span>Confronta con</span><select id="cmpOther">${others.map((o) => `<option value="${esc(o.key)}" ${o.key === opts.refKey ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select></label>` : ""}
       </div>
       <div class="cmp-top">
-        <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}"></svg></div>
+        <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}"></svg>
+          <div class="cmp-steps"><button class="sbtn" data-d="-1" aria-label="Indietro di un passo" title="Indietro (←) · tieni premuto per scorrere">◀</button><button class="sbtn" data-d="1" aria-label="Avanti di un passo" title="Avanti (→) · tieni premuto per scorrere">▶</button></div></div>
         <div class="panel cmp-traj">
           <div class="panel-head"><h2>Traiettoria</h2>
             <div class="traj-tools">
@@ -453,6 +454,31 @@
       z = Math.max(0, Math.min(ZOOMS.length - 1, z + +b.dataset.z));
       setView(midX(cur), midY(cur), ZOOMS[z]);
     }));
+    // avanti/indietro di un campione alla volta; tenendo premuto scorre sempre più veloce
+    const nudge = (d) => hover(Math.max(0, Math.min(n - 1, cur + d)), "drag");
+    el.querySelectorAll(".cmp-steps .sbtn").forEach((b) => {
+      let t = null;
+      const stop = () => { clearTimeout(t); t = null; };
+      b.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const d = +b.dataset.d;
+        let k = 0;
+        nudge(d);
+        const rep = () => { k++; nudge(d); t = setTimeout(rep, k > 20 ? 25 : 70); };
+        t = setTimeout(rep, 400);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, stop));
+    });
+    const onKey = (e) => {
+      if (!document.body.contains(el)) return window.removeEventListener("keydown", onKey);
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
+      e.preventDefault();
+      nudge(e.key === "ArrowLeft" ? -1 : 1);
+    };
+    if (el._cmpKey) window.removeEventListener("keydown", el._cmpKey); // ridisegno nello stesso contenitore
+    el._cmpKey = onKey;
+    window.addEventListener("keydown", onKey);
     let lastW = el.clientWidth;
     const onResize = () => {
       if (!document.body.contains(el) || !document.getElementById("cmpCharts")) return window.removeEventListener("resize", onResize);
