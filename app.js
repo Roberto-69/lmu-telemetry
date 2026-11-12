@@ -316,12 +316,68 @@
     return res;
   }
 
-  function moveHtml(key) {
-    const m = state.moves.get(key);
-    if (!m || Date.now() - m.at > MOVE_SHOW_MS) return "";
-    if (m.gain == null) return `<span class="move new" title="Nuovo in classifica">NEW</span>`;
-    if (m.gain > 0) return `<span class="move up" title="Posizioni guadagnate">▲${m.gain}</span>`;
-    return `<span class="move pb" title="Ha migliorato il suo tempo">▲</span>`;
+  // ---------------------------------------------------------------- posizioni guadagnate/perse
+  // Il browser ricorda il giro migliore di ogni pilota/auto visto all'ultima visita. All'inizio di
+  // una visita nuova (dopo VISIT_GAP_MS senza aprire l'app) quella foto diventa il riferimento:
+  // la classifica di allora si ricalcola con gli stessi filtri e si confrontano le posizioni.
+  const VISIT_GAP_MS = 30 * 60000;
+  const POS_KEY = "lmu-pos";
+
+  function readPos() {
+    try { return JSON.parse(localStorage.getItem(POS_KEY) || "null"); } catch { return null; }
+  }
+  function writePos(v) {
+    try { localStorage.setItem(POS_KEY, JSON.stringify(v)); } catch { /* non importa */ }
+  }
+  const bestsOf = (rows) => Object.fromEntries(rows.map((r) => [r.key, r.best]));
+
+  function updateBaseline(raw) {
+    state.base = null;
+    if (state.era) return;
+    if (state.mode === "demo") {
+      // la demo finge che l'ultima visita sia stata prima dell'ultimo quarto dei giri
+      const dates = demoLaps.map((l) => l.driven_at).sort();
+      const cut = dates[Math.floor(dates.length * 0.75)];
+      const old = build(aggregate(demoLaps.filter((l) => l.driven_at < cut)));
+      state.base = { at: Date.parse(cut), best: bestsOf(old.rows) };
+      return;
+    }
+    const resetId = raw.resets?.[0]?.id ?? 0;
+    const now = Date.now();
+    let s = readPos();
+    if (!s || s.reset !== resetId) s = { reset: resetId };      // dopo un reset si riparte da zero
+    if (s.seen && now - s.seen.at > VISIT_GAP_MS) s.base = s.seen; // visita nuova
+    s.seen = { at: now, best: bestsOf(state.data.rows) };
+    writePos(s);
+    state.base = s.base || null;
+  }
+
+  // Posizione di ogni riga (pilota o pilota+auto, come la classifica) nella classifica di allora
+  function basePositions(track) {
+    const base = state.base.best;
+    let rows = track.rows
+      .filter((r) => (state.cls === "all" || r.cls === state.cls) && base[r.key] != null)
+      .map((r) => ({ id: state.perDriver ? r.driver_id : r.key, best: base[r.key] }));
+    if (state.perDriver) {
+      const by = new Map();
+      for (const r of rows) if (!by.has(r.id) || r.best < by.get(r.id).best) by.set(r.id, r);
+      rows = [...by.values()];
+    }
+    rows.sort((a, b) => a.best - b.best);
+    return new Map(rows.map((r, i) => [r.id, i]));
+  }
+
+  function moveHtml(r, pos, before) {
+    if (!before) return "";
+    const when = new Date(state.base.at).toLocaleString("it-IT", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    const was = before.get(state.perDriver ? r.driver_id : r.key);
+    if (was == null) return `<span class="move new" title="Nuovo in classifica rispetto alla tua visita del ${when}">NEW</span>`;
+    const d = was - pos;
+    if (!d) return "";
+    const n = Math.abs(d);
+    return d > 0
+      ? `<span class="move up" title="${n} posizion${n === 1 ? "e guadagnata" : "i guadagnate"} rispetto alla tua visita del ${when}">▲${n}</span>`
+      : `<span class="move down" title="${n} posizion${n === 1 ? "e persa" : "i perse"} rispetto alla tua visita del ${when}">▼${n}</span>`;
   }
 
   // ---------------------------------------------------------------- classifica
@@ -378,6 +434,7 @@
     // Il viola va sul settore più veloce tra quelli mostrati (giri migliori): il miglior settore
     // assoluto (bestSec) può venire da un altro giro e allora non comparirebbe mai in tabella.
     const shownBest = [0, 1, 2].map((i) => Math.min(...rows.map((r) => r.lap.s[i] ?? Infinity)));
+    const before = state.base ? basePositions(track) : null;
     const body = rows.map((r, i) => {
       const gap = i === 0 ? null : r.best - leader.best;
       const secs = r.lap.s.map((s, si) => {
@@ -392,9 +449,9 @@
       const dot = onT && onT.track_id === r.track_id ? `<span class="live-dot" title="In pista ora · ${esc(onT.car)}"></span>` : "";
       return `
         <tr data-key="${esc(r.key)}" class="${r.key === state.selKey ? "sel" : ""} ${flash}">
-          <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}${moveHtml(r.key)}</td>
+          <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</td>
           <td><div class="driver"><span class="cls-bar ${esc(r.cls)}"></span><div style="min-width:0">
-            <div class="nick">${esc(r.nick)}${dot}</div><div class="car">${esc(r.car)}</div></div></div></td>
+            <div class="nick">${esc(r.nick)}${moveHtml(r, i, before)}${dot}</div><div class="car">${esc(r.car)}</div></div></div></td>
           <td class="r"><span class="time">${fmtLap(r.best)}</span></td>
           <td class="r"><span class="gap">${i === 0 ? "" : fmtGap(gap)}</span></td>
           ${secs}
@@ -430,7 +487,7 @@
 
       <div class="grid">
         <div class="panel">
-          <div class="panel-head"><h2>Classifica</h2><span class="hint"><span class="sec purple">viola</span> = settore migliore · <span class="sec green">verde</span> = record personale</span></div>
+          <div class="panel-head"><h2>Classifica</h2><span class="hint"><span class="sec purple">viola</span> = settore migliore · <span class="sec green">verde</span> = record personale${state.base ? ` · <span class="move up">▲</span><span class="move down" style="margin-left:2px">▼</span> = posizioni dalla tua visita precedente` : ""}</span></div>
           ${rows.length ? `
           <div style="overflow-x:auto">
           <table class="board">
@@ -1123,6 +1180,7 @@
     const prev = state.data;
     state.raw = raw;
     state.data = build(raw);
+    updateBaseline(raw);
     if (compare && prev && state.mode === "live" && !state.era) markMoves(prev, state.data);
     setStatus();
     $updated.textContent = `Aggiornato alle ${new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;

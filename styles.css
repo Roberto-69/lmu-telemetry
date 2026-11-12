@@ -501,8 +501,9 @@ select, .reset input {
 }
 
 /* ---------------------------------------------------------------- live */
-.move { display: block; font-size: 10px; line-height: 1.2; letter-spacing: 0.02em; margin-top: 1px; }
-.move.up, .move.pb { color: var(--green); }
+.move { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; vertical-align: 1px; cursor: help; }
+.move.up { color: var(--green); }
+.move.down { color: var(--red); }
 .move.new { color: var(--accent); }
 .board tr.flash td { animation: row-flash 8s ease-out; }
 @keyframes row-flash {
