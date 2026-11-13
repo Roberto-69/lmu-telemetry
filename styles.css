@@ -380,10 +380,10 @@ select, .reset input {
 .sw.ref { background: var(--purple); }
 .sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
 .cmp-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 0.9fr); gap: 14px; align-items: start; }
-.cmp-map { padding: 10px; }
-.cmp-map svg { width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; user-select: none; }
-.cmp-steps { display: flex; justify-content: center; gap: 10px; padding-top: 6px; }
-.sbtn { width: 52px; height: 34px; border: 1px solid var(--line-2); border-radius: 8px; background: none; color: var(--text); font-size: 14px; cursor: pointer; touch-action: none; user-select: none; }
+.cmp-map { padding: 10px; display: flex; align-items: center; gap: 8px; }
+.cmp-map svg { flex: 1 1 0; min-width: 0; width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; user-select: none; }
+.cmp-steps { display: flex; flex-direction: column; justify-content: center; gap: 10px; flex: none; }
+.sbtn { width: 40px; height: 52px; border: 1px solid var(--line-2); border-radius: 8px; background: none; color: var(--text); font-size: 14px; cursor: pointer; touch-action: none; user-select: none; }
 .sbtn:hover { background: var(--surface-2); }
 .cmp-traj svg { user-select: none; }
 .cmp-traj .panel-head { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
@@ -436,8 +436,8 @@ select, .reset input {
 /* computer: le tre schede alla stessa altezza, la mappa riempie la sua, i microsettori scorrono dentro */
 @media (min-width: 1201px) {
   .cmp-top { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.8fr); align-items: stretch; }
-  .cmp-map { display: flex; flex-direction: column; }
-  .cmp-map svg { flex: 1 1 auto; min-height: 0; }
+  .cmp-map { align-items: stretch; }
+  .cmp-map svg { min-height: 0; }
   .cmp-ms { display: flex; flex-direction: column; }
   .cmp-ms #cmpList { flex: 1 1 auto; min-height: 0; max-height: none; contain: size; }
   .cmp-ms .ms { grid-template-columns: 74px 1fr 56px; gap: 8px; }

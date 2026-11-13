@@ -126,7 +126,7 @@
       </div>
       <div class="cmp-top">
         <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}"></svg>
-          <div class="cmp-steps"><button class="sbtn" data-d="-1" aria-label="Indietro di un passo" title="Indietro (←) · tieni premuto per scorrere">◀</button><button class="sbtn" data-d="1" aria-label="Avanti di un passo" title="Avanti (→) · tieni premuto per scorrere">▶</button></div></div>
+          <div class="cmp-steps"><button class="sbtn" data-d="1" aria-label="Avanti di un passo" title="Avanti (→) · tieni premuto per scorrere">▲</button><button class="sbtn" data-d="-1" aria-label="Indietro di un passo" title="Indietro (←) · tieni premuto per scorrere">▼</button></div></div>
         <div class="panel cmp-traj">
           <div class="panel-head"><h2>Traiettoria</h2>
             <div class="traj-tools">
@@ -236,17 +236,16 @@
       set("cmpDot", mx(cur), my(cur));
     }
 
-    // la vista segue il pallino quando esce dalla parte centrale
-    function follow(margin) {
-      const h = (tv.w * TH) / TW, x = midX(cur), y = midY(cur);
-      if (Math.abs(x - tv.cx) > (tv.w / 2) * margin || Math.abs(y - tv.cy) > (h / 2) * margin) setView(x, y, tv.w);
-    }
+    // i pallini restano sempre al centro: è la pista a scorrere sotto
+    const center = () => setView(midX(cur), midY(cur), tv.w);
 
     function fitRange(a, b) {
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       for (let i = a; i <= b; i++) { x0 = Math.min(x0, midX(i)); x1 = Math.max(x1, midX(i)); y0 = Math.min(y0, midY(i)); y1 = Math.max(y1, midY(i)); }
-      const w = Math.max(50, Math.max(x1 - x0, ((y1 - y0) * TW) / TH) * 1.2 + TRACK_W);
-      setView((x0 + x1) / 2, (y0 + y1) / 2, w);
+      // centrata sul pallino: larga abbastanza da contenere tutto il tratto anche da lì
+      const cx = midX(cur), cy = midY(cur);
+      const w = Math.max(50, Math.max(2 * Math.max(x1 - cx, cx - x0), (2 * Math.max(y1 - cy, cy - y0) * TW) / TH) * 1.1 + TRACK_W);
+      setView(cx, cy, w);
     }
 
     // punto della pista più vicino al dito; a parità preferisce i punti vicini al pallino (tornanti, incroci)
@@ -260,8 +259,9 @@
       return best;
     }
 
-    // trascinamento su un svg: tocco breve senza movimento = onTap, altrimenti scorre lungo la pista
-    function scrub(svg, toIndex, onTap) {
+    // trascinamento su un svg: tocco breve senza movimento = onTap, altrimenti scorre lungo la pista.
+    // pan: invece di inseguire il dito si trascina la pista stessa (la vista è sempre centrata sul pallino)
+    function scrub(svg, toIndex, onTap, pan) {
       let down = null;
       const at = (e) => {
         const p = svg.createSVGPoint();
@@ -270,13 +270,14 @@
       };
       svg.addEventListener("pointerdown", (e) => {
         e.preventDefault(); // niente selezione del testo né scorrimento della pagina durante il trascinamento
-        down = { x: e.clientX, y: e.clientY, moved: false, target: e.target };
+        down = { x: e.clientX, y: e.clientY, moved: false, target: e.target, cx: midX(cur), cy: midY(cur), s: svg.getScreenCTM().a || 1 };
         svg.setPointerCapture(e.pointerId);
       });
       svg.addEventListener("pointermove", (e) => {
         if (!down) return;
         if (!down.moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) return;
         down.moved = true;
+        if (pan) { hover(toIndex(down.cx - (e.clientX - down.x) / down.s, down.cy - (e.clientY - down.y) / down.s), "drag"); return; }
         const p = at(e);
         hover(toIndex(p.x, p.y), "drag");
       });
@@ -412,8 +413,7 @@
         l.setAttribute("x1", xx); l.setAttribute("x2", xx);
       });
       placeDots();
-      if (src === "chart") follow(0.6);
-      else if (src === "drag") follow(0.92);
+      if (src !== "init") center();
       const st = (v) => (Math.abs(v) < 0.02 ? "0" : `${Math.round(Math.abs(v) * 100)}% ${v > 0 ? "dx" : "sx"}`);
       const br = A.brk[i] > 0.03 || B.brk[i] > 0.03 ? ` · freno ${Math.round(A.brk[i] * 100)}% / ${Math.round(B.brk[i] * 100)}%` : "";
       document.getElementById("cmpRead").textContent =
@@ -441,7 +441,7 @@
 
     scrub(document.getElementById("cmpMap"), (px, py) => nearest(mx, my, px, py, step * k * 0.05),
       (t) => { if (t.dataset && t.dataset.i != null) { select(+t.dataset.i); return true; } return false; });
-    scrub(document.getElementById("cmpTraj"), (px, py) => nearest(midX, midY, px, py, step * 0.1));
+    scrub(document.getElementById("cmpTraj"), (px, py) => nearest(midX, midY, px, py, step * 0.1), null, true);
     el.querySelectorAll(".cmp-traj .seg button").forEach((b) => b.addEventListener("click", () => {
       tmode = b.dataset.c;
       el.querySelectorAll(".cmp-traj .seg button").forEach((x) => x.classList.toggle("on", x === b));
