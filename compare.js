@@ -197,6 +197,9 @@
         s += runs(B, bx, by, `stroke-width="2" stroke-dasharray="5 4"`) + runs(A, ax, ay, `stroke-width="2.6"`);
       }
       s += `<circle id="trajRef" fill="var(--purple)" stroke="var(--bg)"/><circle id="trajMe" fill="var(--accent)" stroke="var(--bg)"/>`;
+      // nome del pilota accanto al suo pallino, nello stesso colore
+      const lbl = `font-weight="700" stroke="var(--bg)" paint-order="stroke" stroke-linejoin="round" dominant-baseline="middle"`;
+      s += `<text id="trajRefLbl" fill="var(--purple)" ${lbl}>${esc(ref.nick)}</text><text id="trajMeLbl" fill="var(--accent)" ${lbl}>${esc(me.nick)}</text>`;
       document.getElementById("cmpTraj").innerHTML = s;
       document.getElementById("trajLeg").innerHTML = tmode === "drv"
         ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span><span class="traj-note">bordi pista indicativi</span>`
@@ -214,7 +217,10 @@
       for (const id of ["trajMe", "trajRef"]) {
         const c = document.getElementById(id);
         if (c) { c.setAttribute("r", (id === "trajMe" ? r : r * 0.8).toFixed(2)); c.setAttribute("stroke-width", (r / 3).toFixed(2)); }
+        const t = document.getElementById(id + "Lbl");
+        if (t) { t.setAttribute("font-size", (r * 2).toFixed(2)); t.setAttribute("stroke-width", (r / 2).toFixed(2)); }
       }
+      placeDots();
       showViewBox();
     }
 
@@ -234,6 +240,17 @@
       set("trajMe", A.x[cur], -A.z[cur]);
       set("trajRef", B.x[cur], -B.z[cur]);
       set("cmpDot", mx(cur), my(cur));
+      // etichette ai lati opposti: chi sta più a destra ha il nome a destra
+      const r = (tv.w / TW) * 6, meRight = A.x[cur] >= B.x[cur];
+      const lab = (id, x, y, right) => {
+        const t = document.getElementById(id);
+        if (!t) return;
+        t.setAttribute("x", (x + (right ? 1 : -1) * r * 1.8).toFixed(2));
+        t.setAttribute("y", y.toFixed(2));
+        t.setAttribute("text-anchor", right ? "start" : "end");
+      };
+      lab("trajMeLbl", A.x[cur], -A.z[cur], meRight);
+      lab("trajRefLbl", B.x[cur], -B.z[cur], !meRight);
     }
 
     // i pallini restano sempre al centro: è la pista a scorrere sotto
