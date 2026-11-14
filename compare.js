@@ -158,8 +158,9 @@
         if (m.apex == null) return;
         s += `<text x="${(mx(m.apex) + 9).toFixed(1)}" y="${(my(m.apex) - 7).toFixed(1)}" class="cmp-num">${i + 1}</text>`;
       });
-      s += `<rect x="${(mx(0) - 2).toFixed(1)}" y="${(my(0) - 9).toFixed(1)}" width="4" height="18" fill="var(--text)"/>`;
-      s += `<rect id="cmpView" fill="none" stroke="var(--text)" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>`;
+      // traguardo di traverso alla pista
+      const fa = (Math.atan2(my(Math.min(3, n - 1)) - my(0), mx(Math.min(3, n - 1)) - mx(0)) * 180) / Math.PI;
+      s += `<rect x="${(mx(0) - 2).toFixed(1)}" y="${(my(0) - 9).toFixed(1)}" width="4" height="18" fill="var(--text)" transform="rotate(${fa.toFixed(1)} ${mx(0).toFixed(1)} ${my(0).toFixed(1)})"/>`;
       s += `<circle id="cmpDot" r="6" cx="${mx(cur).toFixed(1)}" cy="${my(cur).toFixed(1)}" fill="var(--accent)" stroke="var(--bg)" stroke-width="2"/>`;
       document.getElementById("cmpMap").innerHTML = s;
       showViewBox();
@@ -472,7 +473,8 @@
       setView(midX(cur), midY(cur), ZOOMS[z]);
     }));
     // avanti/indietro di un campione alla volta; tenendo premuto scorre sempre più veloce
-    const nudge = (d) => hover(Math.max(0, Math.min(n - 1, cur + d)), "drag");
+    // il giro è un anello: dal traguardo indietro si va alla fine, dalla fine avanti si riparte
+    const nudge = (d) => hover((((cur + d) % n) + n) % n, "drag");
     el.querySelectorAll(".cmp-steps .sbtn").forEach((b) => {
       let t = null;
       const stop = () => { clearTimeout(t); t = null; };
