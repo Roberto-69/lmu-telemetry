@@ -131,7 +131,7 @@
     const TW = 400, TH = 300, TRACK_W = 13;
     const midX = (i) => (A.x[i] + B.x[i]) / 2, midY = (i) => -(A.z[i] + B.z[i]) / 2;
     let tv = { cx: 0, cy: 0, w: 160 }, tmode = "drv";
-    const ZOOMS = [50, 80, 120, 160, 240, 360, 540, 800];
+    const ZOOMS = [20, 30, 50, 80, 120, 160, 240, 360, 540, 800]; // larghezza della vista in metri
     const circ = (a, b) => { const d = Math.abs(a - b); return Math.min(d, n - d); };
 
     el.innerHTML = `
