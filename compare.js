@@ -254,8 +254,7 @@
         s += `<polyline points="${pts2(bx, by, 0, n - 1)}" stroke="var(--purple)" stroke-width="2.4" ${ln}/>
           <polyline points="${pts2(ax, ay, 0, n - 1)}" stroke="var(--accent)" stroke-width="2.4" ${ln}/>`;
       } else {
-        // verde gas pieno, rosso freno, bianco rilascio o gas parziale;
-        // ogni linea ha attorno un bordo nel colore del pilota per riconoscerla (tu sopra a tutti)
+        // verde gas pieno, rosso freno, bianco rilascio o gas parziale
         const cat = (T, i) => (T.brk[i] > 0.05 ? 2 : T.thr[i] >= 0.95 ? 0 : 1);
         const PC = ["var(--green)", "#e8ecf3", "var(--red)"];
         const runs = (T, fx, fy, extra) => {
@@ -267,18 +266,16 @@
           }
           return out;
         };
-        for (let k = DR.length - 1; k >= 0; k--) {
-          const d = DR[k], fx = (i) => d.T.x[i], fy = (i) => -d.T.z[i];
-          s += `<polyline points="${pts2(fx, fy, 0, n - 1)}" stroke="${d.c}" stroke-width="${k === 0 ? 7 : 6}" ${ln}/>` +
-            runs(d.T, fx, fy, `stroke-width="${k === 0 ? 3 : 2.4}"`);
-        }
+        // tu linea piena, il riferimento tratteggiato, gli altri piloti a puntini (sotto a tutti)
+        for (const d of XD) s += runs(d.T, (i) => d.T.x[i], (i) => -d.T.z[i], `stroke-width="1.8" stroke-dasharray="1.5 3.5"`);
+        s += runs(B, bx, by, `stroke-width="2" stroke-dasharray="5 4"`) + runs(A, ax, ay, `stroke-width="2.6"`);
       }
       // pallini (il tuo sopra a tutti); nomi e dati stanno fissi nel riquadro a lato
       for (let k = DR.length - 1; k >= 0; k--) s += `<circle id="trajD${k}" fill="${DR[k].c}" stroke="var(--bg)"/>`;
       document.getElementById("cmpTraj").innerHTML = s;
       document.getElementById("trajLeg").innerHTML = tmode === "drv"
         ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span>${xLeg()}<span class="traj-note">bordi pista indicativi</span>`
-        : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>bordo:</span>${DR.map((d) => `<span><i class="sw" style="background:${d.c}"></i>${esc(d.nick)}</span>`).join("")}`;
+        : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>linea piena ${esc(me.nick)}, tratteggio ${esc(ref.nick)}${XD.length ? `, puntini ${XD.map((d) => esc(d.nick)).join(" / ")}` : ""}</span>`;
       setView(tv.cx, tv.cy, tv.w);
       placeDots();
     }
