@@ -68,6 +68,39 @@
     return mins.map((m, k) => ({ name: `Curva ${k + 1}`, a: bounds[k], b: bounds[k + 1], apex: m }));
   }
 
+  // ---------------------------------------------------------------- nomi delle curve
+  // Per pista: lunghezza del giro (m) e curve reali come [metri dal traguardo, nome].
+  // Le posizioni sono state misurate sui giri veri del gruppo (apice delle curve trovate da microsectors).
+  // Una curva trovata prende il nome della curva reale più vicina entro NAME_TOL metri; le altre restano "Curva N".
+  const NAME_TOL = 200;
+  const SPA = { len: 6982, c: [[280, "La Source"], [1270, "Raidillon"], [2385, "Les Combes"], [2560, "Malmedy"], [2955, "Rivage"], [3160, "Bruxelles"], [3720, "Pouhon"], [4390, "Fagnes"], [4560, "Campus"], [4830, "Stavelot"], [6690, "Bus Stop"]] };
+  const CORNERS = {
+    "Autodromo Nazionale Monza": { len: 5781, c: [[975, "Rettifilo"], [2150, "Roggia"], [2555, "Lesmo 1"], [2885, "Lesmo 2"], [3955, "Ascari"], [5195, "Parabolica"]] },
+    "Monza Curva Grande Circuit": { len: 5745, c: [[2125, "Roggia"], [2505, "Lesmo 1"], [2845, "Lesmo 2"], [3910, "Ascari"], [5145, "Parabolica"]] },
+    "Autodromo Enzo e Dino Ferrari": { len: 4901, c: [[705, "Tamburello"], [1425, "Villeneuve"], [1715, "Tosa"], [2330, "Piratella"], [2855, "Acque Minerali"], [3390, "Variante Alta"], [4135, "Rivazza"]] },
+    "Circuit de Spa-Francorchamps": SPA,
+    "Circuit de Spa-Francorchamps Endurance": SPA,
+    "Circuit de la Sarthe": { len: 13624, c: [[845, "Dunlop"], [1480, "Esses"], [1925, "Tertre Rouge"], [4115, "Playstation"], [6090, "Michelin"], [7740, "Mulsanne"], [9855, "Indianapolis"], [10170, "Arnage"], [11560, "Porsche"], [12245, "Corvette"], [12430, "Maison Blanche"], [13450, "Ford"]] },
+    "Bahrain International Circuit": { len: 5387, c: [[745, "Curva 1"], [1530, "Curva 4"], [1895, "Curve 5-7"], [2250, "Curva 8"], [2720, "Curva 10"], [3450, "Curva 11"], [4110, "Curva 13"], [4920, "Curva 14"]] },
+    "Daytona International Speedway Road Course": { len: 5734, c: [[460, "Curva 1"], [960, "Int. Horseshoe"], [1770, "Curva 5"], [2155, "West Horseshoe"], [3935, "Bus Stop"]] },
+    "Michelin Raceway Road Atlanta": { len: 4084, c: [[465, "Curva 1"], [850, "Esses"], [1420, "Curva 6"], [2155, "Curva 7"], [3530, "Chicane 10"]] },
+    "Silverstone National Circuit": { len: 2634, c: [[375, "Copse"], [1050, "Becketts"], [2130, "Luffield"]] },
+  };
+
+  // dà il nome reale ai microsettori della pista (se la conosciamo e il giro ha la lunghezza giusta)
+  function nameCorners(MS, track, step, n) {
+    const t = CORNERS[track];
+    if (!t || Math.abs(n * step - t.len) > t.len * 0.03) return;
+    const used = new Set();
+    for (const m of MS) {
+      if (m.apex == null) continue;
+      const d = m.apex * step;
+      let best = null;
+      for (const c of t.c) if (!used.has(c) && Math.abs(c[0] - d) <= NAME_TOL && (!best || Math.abs(c[0] - d) < Math.abs(best[0] - d))) best = c;
+      if (best) { used.add(best); m.real = best[1]; }
+    }
+  }
+
   // ---------------------------------------------------------------- disegno
   const fmt = (t) => {
     const m = Math.floor(t / 60);
@@ -100,6 +133,7 @@
     for (let i = 0; i < n; i++) D[i] = A.t[i] - B.t[i];
     const MS = microsectors(B, n);
     MS.forEach((m) => (m.g = D[m.b] - D[m.a]));
+    nameCorners(MS, opts.track, step, n);
     const gap = me.lap - ref.lap;
 
     // mappa (vista dall'alto: x a destra, z verso l'alto)
@@ -131,7 +165,7 @@
     const TW = 400, TH = 300, TRACK_W = 13;
     const midX = (i) => (A.x[i] + B.x[i]) / 2, midY = (i) => -(A.z[i] + B.z[i]) / 2;
     let tv = { cx: 0, cy: 0, w: 160 }, tmode = "drv";
-    const ZOOMS = [20, 30, 50, 80, 120, 160, 240, 360, 540, 800]; // larghezza della vista in metri
+    const ZOOMS = [10, 15, 20, 30, 50, 80, 120, 160, 240, 360, 540, 800]; // larghezza della vista in metri
     const circ = (a, b) => { const d = Math.abs(a - b); return Math.min(d, n - d); };
 
     el.innerHTML = `
@@ -152,7 +186,8 @@
               <button class="zbtn" data-z="1" aria-label="Allontana">−</button><button class="zbtn" data-z="-1" aria-label="Avvicina">+</button>
             </div>
           </div>
-          <svg id="cmpTraj" viewBox="0 0 ${TW} ${TH}" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="traj-wrap"><svg id="cmpTraj" viewBox="0 0 ${TW} ${TH}" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="traj-data" id="trajData" aria-live="off"></div></div>
           <div class="traj-leg" id="trajLeg"></div>
         </div>
         <div class="panel cmp-ms">
@@ -219,7 +254,8 @@
         s += `<polyline points="${pts2(bx, by, 0, n - 1)}" stroke="var(--purple)" stroke-width="2.4" ${ln}/>
           <polyline points="${pts2(ax, ay, 0, n - 1)}" stroke="var(--accent)" stroke-width="2.4" ${ln}/>`;
       } else {
-        // verde gas pieno, rosso freno, bianco rilascio o gas parziale; il riferimento è tratteggiato
+        // verde gas pieno, rosso freno, bianco rilascio o gas parziale;
+        // ogni linea ha attorno un bordo nel colore del pilota per riconoscerla (tu sopra a tutti)
         const cat = (T, i) => (T.brk[i] > 0.05 ? 2 : T.thr[i] >= 0.95 ? 0 : 1);
         const PC = ["var(--green)", "#e8ecf3", "var(--red)"];
         const runs = (T, fx, fy, extra) => {
@@ -231,16 +267,18 @@
           }
           return out;
         };
-        s += runs(B, bx, by, `stroke-width="2" stroke-dasharray="5 4"`) + runs(A, ax, ay, `stroke-width="2.6"`);
+        for (let k = DR.length - 1; k >= 0; k--) {
+          const d = DR[k], fx = (i) => d.T.x[i], fy = (i) => -d.T.z[i];
+          s += `<polyline points="${pts2(fx, fy, 0, n - 1)}" stroke="${d.c}" stroke-width="${k === 0 ? 7 : 6}" ${ln}/>` +
+            runs(d.T, fx, fy, `stroke-width="${k === 0 ? 3 : 2.4}"`);
+        }
       }
-      // pallini (il tuo sopra a tutti), nome accanto nello stesso colore e sotto distacco in quel punto e marcia
-      const lbl = `font-weight="700" stroke="var(--bg)" paint-order="stroke" stroke-linejoin="round" dominant-baseline="middle"`;
+      // pallini (il tuo sopra a tutti); nomi e dati stanno fissi nel riquadro a lato
       for (let k = DR.length - 1; k >= 0; k--) s += `<circle id="trajD${k}" fill="${DR[k].c}" stroke="var(--bg)"/>`;
-      for (let k = DR.length - 1; k >= 0; k--) s += `<text id="trajD${k}Lbl" fill="${DR[k].c}" ${lbl}>${esc(DR[k].nick)}</text><text id="trajD${k}LblSub" ${lbl}></text>`;
       document.getElementById("cmpTraj").innerHTML = s;
       document.getElementById("trajLeg").innerHTML = tmode === "drv"
         ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span>${xLeg()}<span class="traj-note">bordi pista indicativi</span>`
-        : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>linea piena ${esc(me.nick)}, tratteggio ${esc(ref.nick)}</span>`;
+        : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>bordo:</span>${DR.map((d) => `<span><i class="sw" style="background:${d.c}"></i>${esc(d.nick)}</span>`).join("")}`;
       setView(tv.cx, tv.cy, tv.w);
       placeDots();
     }
@@ -255,10 +293,6 @@
         const id = "trajD" + k;
         const c = document.getElementById(id);
         if (c) { c.setAttribute("r", (k === 0 ? r : r * 0.8).toFixed(2)); c.setAttribute("stroke-width", (r / 3).toFixed(2)); }
-        const t = document.getElementById(id + "Lbl");
-        if (t) { t.setAttribute("font-size", (r * 2).toFixed(2)); t.setAttribute("stroke-width", (r / 2).toFixed(2)); }
-        const u = document.getElementById(id + "LblSub");
-        if (u) { u.setAttribute("font-size", (r * 1.6).toFixed(2)); u.setAttribute("stroke-width", (r / 2).toFixed(2)); }
       }
       placeDots();
       showViewBox();
@@ -278,29 +312,15 @@
     function placeDots() {
       const set = (id, x, y) => { const c = document.getElementById(id); if (c) { c.setAttribute("cx", x.toFixed(2)); c.setAttribute("cy", y.toFixed(2)); } };
       set("cmpDot", mx(cur), my(cur));
-      const r = (tv.w / TW) * 6, H = r * 4.4; // altezza di nome + riga sotto
-      const P = DR.map((d, k) => ({ k, d, x: d.T.x[cur], y: -d.T.z[cur] }));
-      P.forEach((p) => set("trajD" + p.k, p.x, p.y));
-      // metà dei nomi a sinistra (i più a sinistra) e metà a destra; a parità di posizione il tuo va a destra
-      const byX = [...P].sort((p, q) => p.x - q.x || q.k - p.k);
-      byX.forEach((p, i) => (p.right = i >= Math.floor(P.length / 2)));
-      // sullo stesso lato le etichette si impilano senza sovrapporsi, restando attorno ai pallini
-      for (const right of [false, true]) {
-        const side = P.filter((p) => p.right === right).sort((p, q) => p.y - q.y);
-        side.forEach((p, i) => (p.ly = i ? Math.max(p.y, side[i - 1].ly + H) : p.y));
-        const shift = side.reduce((t, p) => t + p.ly - p.y, 0) / (side.length || 1);
-        side.forEach((p) => (p.ly -= shift));
-      }
-      for (const p of P) {
-        const t = document.getElementById(`trajD${p.k}Lbl`), u = document.getElementById(`trajD${p.k}LblSub`);
-        if (!t) continue;
-        const lx = (p.x + (p.right ? 1 : -1) * r * 1.8).toFixed(2), anchor = p.right ? "start" : "end";
-        t.setAttribute("x", lx); t.setAttribute("y", (p.ly - r * 0.9).toFixed(2)); t.setAttribute("text-anchor", anchor);
-        if (!u) continue;
-        const dd = p.k === 1 ? -D[cur] : p.d.T.t[cur] - B.t[cur]; // il riferimento si confronta con te
-        u.setAttribute("x", lx); u.setAttribute("y", (p.ly + r * 1.2).toFixed(2)); u.setAttribute("text-anchor", anchor);
-        u.innerHTML = `<tspan fill="${col(dd)}">Δ ${dd >= 0 ? "+" : "−"}${Math.abs(dd).toFixed(3)}</tspan><tspan fill="${p.d.c}"> · ${gearTxt(p.d.T.gear[cur])}</tspan>`;
-      }
+      DR.forEach((d, k) => set("trajD" + k, d.T.x[cur], -d.T.z[cur]));
+      // riquadro fisso: per ogni pilota nick nel colore del pallino, distacco in quel punto, marcia, velocità
+      const box = document.getElementById("trajData");
+      if (box) box.innerHTML = DR.map((d, k) => {
+        const dd = k === 1 ? -D[cur] : d.T.t[cur] - B.t[cur]; // il riferimento si confronta con te
+        return `<i style="background:${d.c}"></i><b style="color:${d.c}">${esc(d.nick)}</b>` +
+          `<span style="color:${col(dd)}">${dd >= 0 ? "+" : "−"}${Math.abs(dd).toFixed(3)}</span>` +
+          `<span>${gearTxt(d.T.gear[cur])}</span><span>${Math.round(d.T.speed[cur])}<small> km/h</small></span>`;
+      }).join("");
     }
 
     // i pallini restano sempre al centro: è la pista a scorrere sotto
@@ -381,7 +401,7 @@
         const m = MS[i];
         const w = (Math.abs(m.g) / mxg) * 50;
         return `<button class="ms ${sel === i ? "on" : ""}" data-i="${i}">
-          <span class="ms-n">${esc(m.name)}</span>
+          <span class="ms-n" title="${esc(m.real || m.name)}">${m.real ? `<i class="ms-k">${i + 1}</i>${esc(m.real)}` : esc(m.name)}</span>
           <span class="ms-bar"><i style="background:${col(m.g)};${m.g > 0 ? "left:50%" : "right:50%"};width:${w}%"></i></span>
           <span class="ms-v" style="color:${col(m.g)}">${sign(m.g)}${Math.abs(m.g).toFixed(3)}</span></button>`;
       }).join("");

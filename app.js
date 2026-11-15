@@ -984,6 +984,7 @@
       { trace: B, nick: ref.nick, lap: ref.best },
       {
         refKey: ref.key,
+        track: r.track,
         refIsRecord: Math.abs(ref.best - classRec) < 0.0005 && ref.cls === r.cls,
         others: peers.map((p) => ({ key: p.key, label: `${p.nick} · ${p.car} · ${fmtLap(p.best)}` })),
         extra: extra.map((x, i) => ({ trace: E[i], nick: x.nick, lap: x.best, key: x.key })),
