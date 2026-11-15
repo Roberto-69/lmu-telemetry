@@ -77,10 +77,24 @@
   const col = (g) => (Math.abs(g) < 0.005 ? "var(--faint)" : g > 0 ? "var(--red)" : "var(--green)");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  /** me, ref: { trace, nick, lap } ; el: contenitore ; opts.onPickOther(key) */
+  // colori dei piloti aggiunti oltre a te (giallo) e al riferimento (viola)
+  const XC = ["#22d3ee", "#ff8a3d", "#ff6fb5", "#a3e635"];
+  const gearTxt = (g) => (g > 0 ? g + "ª" : g === 0 ? "N" : "R");
+
+  /** me, ref: { trace, nick, lap } ; el: contenitore
+   *  opts.extra: altri piloti [{ trace, nick, lap, key }], confrontati anche loro col riferimento
+   *  opts.onPickOther(key) cambia il riferimento, opts.onSetExtra(keys) cambia gli altri piloti */
   function render(el, me, ref, opts = {}) {
     const A = me.trace, B = ref.trace;
-    const n = Math.min(A.n, B.n);
+    const extra = opts.extra || [];
+    // tutti i piloti mostrati: tu, il riferimento, gli altri. Il distacco di ognuno è rispetto al riferimento
+    const DR = [
+      { T: A, nick: me.nick, c: "var(--accent)" },
+      { T: B, nick: ref.nick, c: "var(--purple)" },
+      ...extra.map((e, j) => ({ T: e.trace, nick: e.nick, c: XC[j % XC.length], lap: e.lap, key: e.key })),
+    ];
+    const XD = DR.slice(2);
+    const n = Math.min(...DR.map((d) => d.T.n));
     const step = B.step;
     const D = new Float64Array(n);
     for (let i = 0; i < n; i++) D[i] = A.t[i] - B.t[i];
@@ -94,9 +108,11 @@
       mnx = Math.min(mnx, B.x[i]); mxx = Math.max(mxx, B.x[i]);
       mnz = Math.min(mnz, B.z[i]); mxz = Math.max(mxz, B.z[i]);
     }
-    const MW = 400, MH = 300, pad = 14;
-    const k = Math.min((MW - 2 * pad) / Math.max(1, mxx - mnx), (MH - 2 * pad) / Math.max(1, mxz - mnz));
-    const ox = (MW - (mxx - mnx) * k) / 2, oy = (MH - (mxz - mnz) * k) / 2;
+    // il riquadro del disegno ha le proporzioni della pista: lo svg la allarga quanto più può nel pannello
+    const pad = 16;
+    const k = 400 / Math.max(1, mxx - mnx, mxz - mnz);
+    const MW = Math.round((mxx - mnx) * k + 2 * pad), MH = Math.round((mxz - mnz) * k + 2 * pad);
+    const ox = pad, oy = pad;
     const mx = (i) => ox + (B.x[i] - mnx) * k;
     const my = (i) => oy + (mxz - B.z[i]) * k;
     const pts = (a, b) => {
@@ -108,6 +124,7 @@
     };
 
     let sel = null, r0 = 0, r1 = n - 1, cur = 0;
+    const xLeg = () => XD.map((d) => `<span><i class="sw" style="background:${d.c}"></i>${esc(d.nick)}</span>`).join("");
     const others = opts.others || [];
 
     // traiettoria: vista ingrandita in metri (X = x, Y = -z), linea di mezzo tra i due giri per la fascia della pista
@@ -124,8 +141,9 @@
         <div class="mini"><div class="k">Distacco</div><div class="v" style="color:${col(gap)}">${sign(gap)}${Math.abs(gap).toFixed(3)}</div></div>
         ${others.length ? `<label class="cmp-pick"><span>Confronta con</span><select id="cmpOther">${others.map((o) => `<option value="${esc(o.key)}" ${o.key === opts.refKey ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select></label>` : ""}
       </div>
+      ${extraRow()}
       <div class="cmp-top">
-        <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}"></svg>
+        <div class="panel cmp-map"><svg id="cmpMap" viewBox="0 0 ${MW} ${MH}" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="cmp-steps"><button class="sbtn" data-d="1" aria-label="Avanti di un passo" title="Avanti (→) · tieni premuto per scorrere">▲</button><button class="sbtn" data-d="-1" aria-label="Indietro di un passo" title="Indietro (←) · tieni premuto per scorrere">▼</button></div></div>
         <div class="panel cmp-traj">
           <div class="panel-head"><h2>Traiettoria</h2>
@@ -144,10 +162,27 @@
       </div>
       <div class="cmp-readout" id="cmpRead">Passa sul grafico o trascina il pallino sulla pista per leggere i valori</div>
       <div class="panel cmp-charts" id="cmpCharts"></div>
-      <div class="cmp-legend"><span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span><span><i class="sq" style="background:var(--green)"></i>guadagni</span><span><i class="sq" style="background:var(--red)"></i>perdi</span></div>`;
+      <div class="cmp-legend"><span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span>${xLeg()}<span><i class="sq" style="background:var(--green)"></i>guadagni</span><span><i class="sq" style="background:var(--red)"></i>perdi</span></div>`;
 
     const pick = document.getElementById("cmpOther");
     if (pick && opts.onPickOther) pick.addEventListener("change", () => opts.onPickOther(pick.value));
+    const xKeys = XD.map((d) => d.key);
+    const addSel = document.getElementById("cmpAdd");
+    if (addSel && opts.onSetExtra) addSel.addEventListener("change", () => addSel.value && opts.onSetExtra([...xKeys, addSel.value]));
+    el.querySelectorAll(".xchip button").forEach((b) => b.addEventListener("click", () => opts.onSetExtra && opts.onSetExtra(xKeys.filter((k) => k !== b.dataset.k))));
+
+    // riga degli altri piloti: un'etichetta per ognuno (× per toglierlo) e il menu per aggiungerne
+    function extraRow() {
+      const free = others.filter((o) => o.key !== opts.refKey && !XD.some((d) => d.key === o.key));
+      const canAdd = opts.onSetExtra && free.length && XD.length < (opts.maxExtra || XC.length);
+      if (!XD.length && !canAdd) return "";
+      const chips = XD.map((d) => {
+        const g = d.lap - ref.lap;
+        return `<span class="xchip"><i class="sw" style="background:${d.c}"></i>${esc(d.nick)} <b>${fmt(d.lap)}</b> <span style="color:${col(g)}">${sign(g)}${Math.abs(g).toFixed(3)}</span>${opts.onSetExtra ? `<button data-k="${esc(d.key)}" aria-label="Togli ${esc(d.nick)}" title="Togli dal confronto">×</button>` : ""}</span>`;
+      }).join("");
+      const add = canAdd ? `<select id="cmpAdd" aria-label="Aggiungi un pilota al confronto"><option value="">+ Aggiungi pilota</option>${free.map((o) => `<option value="${esc(o.key)}">${esc(o.label)}</option>`).join("")}</select>` : "";
+      return `<div class="cmp-extra">${chips}${add}</div>`;
+    }
 
     function drawMap() {
       let s = `<polyline points="${pts(0, n - 1)}" fill="none" stroke="var(--line-2)" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>`;
@@ -180,6 +215,7 @@
         <rect x="${(midX(0) - 0.6).toFixed(2)}" y="${(midY(0) - TRACK_W / 2).toFixed(2)}" width="1.2" height="${TRACK_W}" fill="var(--text)" opacity="0.6"
           transform="rotate(${((Math.atan2(midY(1) - midY(0), midX(1) - midX(0)) * 180) / Math.PI).toFixed(1)} ${midX(0).toFixed(2)} ${midY(0).toFixed(2)})"/>`;
       if (tmode === "drv") {
+        for (const d of XD) s += `<polyline points="${pts2((i) => d.T.x[i], (i) => -d.T.z[i], 0, n - 1)}" stroke="${d.c}" stroke-width="2" ${ln}/>`;
         s += `<polyline points="${pts2(bx, by, 0, n - 1)}" stroke="var(--purple)" stroke-width="2.4" ${ln}/>
           <polyline points="${pts2(ax, ay, 0, n - 1)}" stroke="var(--accent)" stroke-width="2.4" ${ln}/>`;
       } else {
@@ -197,13 +233,13 @@
         };
         s += runs(B, bx, by, `stroke-width="2" stroke-dasharray="5 4"`) + runs(A, ax, ay, `stroke-width="2.6"`);
       }
-      s += `<circle id="trajRef" fill="var(--purple)" stroke="var(--bg)"/><circle id="trajMe" fill="var(--accent)" stroke="var(--bg)"/>`;
-      // nome del pilota accanto al suo pallino, nello stesso colore
+      // pallini (il tuo sopra a tutti), nome accanto nello stesso colore e sotto distacco in quel punto e marcia
       const lbl = `font-weight="700" stroke="var(--bg)" paint-order="stroke" stroke-linejoin="round" dominant-baseline="middle"`;
-      s += `<text id="trajRefLbl" fill="var(--purple)" ${lbl}>${esc(ref.nick)}</text><text id="trajMeLbl" fill="var(--accent)" ${lbl}>${esc(me.nick)}</text>`;
+      for (let k = DR.length - 1; k >= 0; k--) s += `<circle id="trajD${k}" fill="${DR[k].c}" stroke="var(--bg)"/>`;
+      for (let k = DR.length - 1; k >= 0; k--) s += `<text id="trajD${k}Lbl" fill="${DR[k].c}" ${lbl}>${esc(DR[k].nick)}</text><text id="trajD${k}LblSub" ${lbl}></text>`;
       document.getElementById("cmpTraj").innerHTML = s;
       document.getElementById("trajLeg").innerHTML = tmode === "drv"
-        ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span><span class="traj-note">bordi pista indicativi</span>`
+        ? `<span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span>${xLeg()}<span class="traj-note">bordi pista indicativi</span>`
         : `<span><i class="sq" style="background:var(--green)"></i>gas pieno</span><span><i class="sq" style="background:#e8ecf3"></i>rilascio / parziale</span><span><i class="sq" style="background:var(--red)"></i>freno</span><span>linea piena ${esc(me.nick)}, tratteggio ${esc(ref.nick)}</span>`;
       setView(tv.cx, tv.cy, tv.w);
       placeDots();
@@ -215,11 +251,14 @@
       const svg = document.getElementById("cmpTraj");
       svg.setAttribute("viewBox", `${(cx - w / 2).toFixed(2)} ${(cy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
       const r = (w / TW) * 6;
-      for (const id of ["trajMe", "trajRef"]) {
+      for (let k = 0; k < DR.length; k++) {
+        const id = "trajD" + k;
         const c = document.getElementById(id);
-        if (c) { c.setAttribute("r", (id === "trajMe" ? r : r * 0.8).toFixed(2)); c.setAttribute("stroke-width", (r / 3).toFixed(2)); }
+        if (c) { c.setAttribute("r", (k === 0 ? r : r * 0.8).toFixed(2)); c.setAttribute("stroke-width", (r / 3).toFixed(2)); }
         const t = document.getElementById(id + "Lbl");
         if (t) { t.setAttribute("font-size", (r * 2).toFixed(2)); t.setAttribute("stroke-width", (r / 2).toFixed(2)); }
+        const u = document.getElementById(id + "LblSub");
+        if (u) { u.setAttribute("font-size", (r * 1.6).toFixed(2)); u.setAttribute("stroke-width", (r / 2).toFixed(2)); }
       }
       placeDots();
       showViewBox();
@@ -238,20 +277,30 @@
 
     function placeDots() {
       const set = (id, x, y) => { const c = document.getElementById(id); if (c) { c.setAttribute("cx", x.toFixed(2)); c.setAttribute("cy", y.toFixed(2)); } };
-      set("trajMe", A.x[cur], -A.z[cur]);
-      set("trajRef", B.x[cur], -B.z[cur]);
       set("cmpDot", mx(cur), my(cur));
-      // etichette ai lati opposti: chi sta più a destra ha il nome a destra
-      const r = (tv.w / TW) * 6, meRight = A.x[cur] >= B.x[cur];
-      const lab = (id, x, y, right) => {
-        const t = document.getElementById(id);
-        if (!t) return;
-        t.setAttribute("x", (x + (right ? 1 : -1) * r * 1.8).toFixed(2));
-        t.setAttribute("y", y.toFixed(2));
-        t.setAttribute("text-anchor", right ? "start" : "end");
-      };
-      lab("trajMeLbl", A.x[cur], -A.z[cur], meRight);
-      lab("trajRefLbl", B.x[cur], -B.z[cur], !meRight);
+      const r = (tv.w / TW) * 6, H = r * 4.4; // altezza di nome + riga sotto
+      const P = DR.map((d, k) => ({ k, d, x: d.T.x[cur], y: -d.T.z[cur] }));
+      P.forEach((p) => set("trajD" + p.k, p.x, p.y));
+      // metà dei nomi a sinistra (i più a sinistra) e metà a destra; a parità di posizione il tuo va a destra
+      const byX = [...P].sort((p, q) => p.x - q.x || q.k - p.k);
+      byX.forEach((p, i) => (p.right = i >= Math.floor(P.length / 2)));
+      // sullo stesso lato le etichette si impilano senza sovrapporsi, restando attorno ai pallini
+      for (const right of [false, true]) {
+        const side = P.filter((p) => p.right === right).sort((p, q) => p.y - q.y);
+        side.forEach((p, i) => (p.ly = i ? Math.max(p.y, side[i - 1].ly + H) : p.y));
+        const shift = side.reduce((t, p) => t + p.ly - p.y, 0) / (side.length || 1);
+        side.forEach((p) => (p.ly -= shift));
+      }
+      for (const p of P) {
+        const t = document.getElementById(`trajD${p.k}Lbl`), u = document.getElementById(`trajD${p.k}LblSub`);
+        if (!t) continue;
+        const lx = (p.x + (p.right ? 1 : -1) * r * 1.8).toFixed(2), anchor = p.right ? "start" : "end";
+        t.setAttribute("x", lx); t.setAttribute("y", (p.ly - r * 0.9).toFixed(2)); t.setAttribute("text-anchor", anchor);
+        if (!u) continue;
+        const dd = p.k === 1 ? -D[cur] : p.d.T.t[cur] - B.t[cur]; // il riferimento si confronta con te
+        u.setAttribute("x", lx); u.setAttribute("y", (p.ly + r * 1.2).toFixed(2)); u.setAttribute("text-anchor", anchor);
+        u.innerHTML = `<tspan fill="${col(dd)}">Δ ${dd >= 0 ? "+" : "−"}${Math.abs(dd).toFixed(3)}</tspan><tspan fill="${p.d.c}"> · ${gearTxt(p.d.T.gear[cur])}</tspan>`;
+      }
     }
 
     // i pallini restano sempre al centro: è la pista a scorrere sotto
@@ -365,7 +414,8 @@
         let body = "";
         if (c.id === "d") {
           let lo = -0.02, hi = 0.02;
-          for (let i = r0; i <= r1; i++) { lo = Math.min(lo, D[i]); hi = Math.max(hi, D[i]); }
+          const XDl = XD.map((d) => { const a = new Float64Array(n); for (let i = 0; i < n; i++) a[i] = d.T.t[i] - B.t[i]; return a; });
+          for (let i = r0; i <= r1; i++) { lo = Math.min(lo, D[i]); hi = Math.max(hi, D[i]); for (const a of XDl) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); } }
           const padv = (hi - lo) * 0.08; lo -= padv; hi += padv;
           const Y = (v) => 5 + (1 - (v - lo) / (hi - lo)) * (c.h - 10);
           const z = Y(0);
@@ -378,20 +428,23 @@
           pos += `L${X(r1)},${z}Z`; neg += `L${X(r1)},${z}Z`;
           body = `<path d="${pos}" fill="var(--red)" opacity="0.28"/><path d="${neg}" fill="var(--green)" opacity="0.28"/>
             <line x1="${L}" x2="${W - R}" y1="${z}" y2="${z}" stroke="var(--line-2)"/>
+            ${XDl.map((a, j) => `<path d="${line(a, lo, hi, c.h)}" fill="none" stroke="${XD[j].c}" stroke-width="1.3" opacity="0.9"/>`).join("")}
             <path d="${line(D, lo, hi, c.h)}" fill="none" stroke="var(--text)" stroke-width="1.6"/>
             <text x="${L - 6}" y="${Y(hi) + 12}" text-anchor="end" class="lbl">+${hi.toFixed(2)}</text>
             <text x="${L - 6}" y="${z + 4}" text-anchor="end" class="lbl">0</text>
             <text x="${L - 6}" y="${Y(lo) - 2}" text-anchor="end" class="lbl">${lo.toFixed(2)}</text>`;
         } else {
-          const pair = c.id === "v" ? [B.speed, A.speed] : c.id === "th" ? [B.thr, A.thr] : c.id === "s" ? [B.steer, A.steer] : [B.brk, A.brk];
+          const f = c.id === "v" ? "speed" : c.id === "th" ? "thr" : c.id === "s" ? "steer" : "brk";
+          const pair = [B[f], A[f]], xs = XD.map((d) => d.T[f]);
           let lo = c.id === "s" ? -1.05 : 0, hi = 1.05;
           if (c.id === "v") {
             lo = Infinity; hi = -Infinity;
-            for (let i = r0; i <= r1; i++) { lo = Math.min(lo, pair[0][i], pair[1][i]); hi = Math.max(hi, pair[0][i], pair[1][i]); }
+            for (let i = r0; i <= r1; i++) for (const a of [...pair, ...xs]) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
             lo = Math.max(0, lo - 10); hi += 10;
           }
           const mid = 5 + (1 - (0 - lo) / (hi - lo)) * (c.h - 10);
           body = (c.id === "s" ? `<line x1="${L}" x2="${W - R}" y1="${mid}" y2="${mid}" stroke="var(--line-2)"/>` : "") +
+            xs.map((a, j) => `<path d="${line(a, lo, hi, c.h)}" fill="none" stroke="${XD[j].c}" stroke-width="1.3" opacity="0.9"/>`).join("") +
             `<path d="${line(pair[0], lo, hi, c.h)}" fill="none" stroke="var(--purple)" stroke-width="1.6"/>
             <path d="${line(pair[1], lo, hi, c.h)}" fill="none" stroke="var(--accent)" stroke-width="1.6"/>` +
             (c.id === "s"
@@ -435,7 +488,7 @@
       const st = (v) => (Math.abs(v) < 0.02 ? "0" : `${Math.round(Math.abs(v) * 100)}% ${v > 0 ? "dx" : "sx"}`);
       const br = A.brk[i] > 0.03 || B.brk[i] > 0.03 ? ` · freno ${Math.round(A.brk[i] * 100)}% / ${Math.round(B.brk[i] * 100)}%` : "";
       document.getElementById("cmpRead").textContent =
-        `${Math.round(i * step)} m · ${me.nick} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${ref.nick} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${br} · sterzo ${st(A.steer[i])} / ${st(B.steer[i])} · linea ${me.nick}: ${lateral(i)}`;
+        `${Math.round(i * step)} m · ${me.nick} ${Math.round(A.speed[i])} km/h ${A.gear[i]}ª · ${ref.nick} ${Math.round(B.speed[i])} km/h ${B.gear[i]}ª · Δ ${D[i] >= 0 ? "+" : ""}${D[i].toFixed(3)} s${XD.map((d) => { const x = d.T.t[i] - B.t[i]; return ` · ${d.nick} ${Math.round(d.T.speed[i])} km/h ${gearTxt(d.T.gear[i])} Δ ${x >= 0 ? "+" : ""}${x.toFixed(3)} s`; }).join("")}${br} · sterzo ${st(A.steer[i])} / ${st(B.steer[i])} · linea ${me.nick}: ${lateral(i)}`;
     }
 
     function select(i) {

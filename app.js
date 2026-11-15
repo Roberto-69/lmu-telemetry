@@ -764,8 +764,8 @@
 
   // ---------------------------------------------------------------- pagine (#giri, #confronto, #reset)
   function parseHash() {
-    const [type, a, b] = decodeURIComponent(location.hash.slice(1)).split("/");
-    state.view = ["giri", "confronto", "reset", "cancella"].includes(type) ? { type, key: a || null, ref: b || null } : null;
+    const [type, a, b, ...more] = decodeURIComponent(location.hash.slice(1)).split("/");
+    state.view = ["giri", "confronto", "reset", "cancella"].includes(type) ? { type, key: a || null, ref: b || null, more: more.filter(Boolean) } : null;
     state.openLap = null;
   }
   function goHome() {
@@ -952,6 +952,7 @@
     return t;
   }
 
+  const MAX_EXTRA = 4;
   async function renderCompare() {
     const v = state.view;
     const d = state.data;
@@ -966,9 +967,12 @@
       return;
     }
     $app.innerHTML = head + `<div id="cmp"><div class="loading"><div class="spinner"></div>Carico la telemetria…</div></div>`;
-    let A, B;
+    // altri piloti oltre al riferimento (#confronto/io/rif/altro1/altro2…), al massimo MAX_EXTRA
+    const extra = [...new Set(v.more || [])].map((k) => d.byKey.get(k))
+      .filter((x) => x && x.hasTrace && x.track_id === r.track_id && x.key !== r.key && x.key !== ref.key).slice(0, MAX_EXTRA);
+    let A, B, E;
     try {
-      [A, B] = await Promise.all([getTrace(r), getTrace(ref)]);
+      [A, B, ...E] = await Promise.all([getTrace(r), getTrace(ref), ...extra.map(getTrace)]);
     } catch (e) {
       const unsupported = typeof DecompressionStream === "undefined";
       document.getElementById("cmp").innerHTML = `<div class="empty" style="padding:40px"><p>${unsupported ? "Questo browser è troppo vecchio per leggere la telemetria: aggiorna Chrome o Safari." : "Telemetria non disponibile. Controlla la connessione e riprova."}</p></div>`;
@@ -982,8 +986,14 @@
         refKey: ref.key,
         refIsRecord: Math.abs(ref.best - classRec) < 0.0005 && ref.cls === r.cls,
         others: peers.map((p) => ({ key: p.key, label: `${p.nick} · ${p.car} · ${fmtLap(p.best)}` })),
-        onPickOther: (k) => { location.hash = `#confronto/${enc(r.key)}/${enc(k)}`; },
+        extra: extra.map((x, i) => ({ trace: E[i], nick: x.nick, lap: x.best, key: x.key })),
+        maxExtra: MAX_EXTRA,
+        onPickOther: (k) => go(k, extra.map((x) => x.key).filter((x) => x !== k)),
+        onSetExtra: (keys) => go(ref.key, keys),
       });
+    function go(refKey, keys) {
+      location.hash = `#confronto/${[r.key, refKey, ...keys].map(enc).join("/")}`;
+    }
   }
 
   function renderReset() {

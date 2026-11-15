@@ -375,13 +375,19 @@ select, .reset input {
 .cmp-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.3fr); gap: 10px; align-items: end; margin-bottom: 14px; }
 .cmp-head .mini .k { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0.02em; font-size: 12px; }
 .cmp-pick { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.cmp-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 14px; font-size: 13px; }
+.xchip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 6px 4px 12px; }
+.xchip b, .xchip span { font-family: var(--mono); font-size: 12px; }
+.xchip button { background: none; border: 0; color: var(--muted); font-size: 16px; line-height: 1; width: 22px; height: 22px; border-radius: 50%; cursor: pointer; }
+.xchip button:hover { background: var(--surface-2); color: var(--text); }
+.cmp-extra select { max-width: 100%; }
 .sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; }
 .sw.me { background: var(--accent); }
 .sw.ref { background: var(--purple); }
 .sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
 .cmp-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 0.9fr); gap: 14px; align-items: start; }
 .cmp-map { padding: 10px; display: flex; align-items: center; gap: 8px; }
-.cmp-map svg { flex: 1 1 0; min-width: 0; width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; user-select: none; }
+.cmp-map svg { flex: 1 1 0; min-width: 0; width: 100%; height: auto; max-height: 70vh; display: block; touch-action: none; cursor: pointer; user-select: none; }
 .cmp-steps { display: flex; flex-direction: column; justify-content: center; gap: 10px; flex: none; }
 .sbtn { width: 40px; height: 52px; border: 1px solid var(--line-2); border-radius: 8px; background: none; color: var(--text); font-size: 14px; cursor: pointer; touch-action: none; user-select: none; }
 .sbtn:hover { background: var(--surface-2); }
@@ -437,7 +443,7 @@ select, .reset input {
 @media (min-width: 1201px) {
   .cmp-top { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.8fr); align-items: stretch; }
   .cmp-map { align-items: stretch; }
-  .cmp-map svg { min-height: 0; }
+  .cmp-map svg { min-height: 0; max-height: none; contain: size; } /* l'altezza la danno le altre schede, non la forma della pista */
   .cmp-ms { display: flex; flex-direction: column; }
   .cmp-ms #cmpList { flex: 1 1 auto; min-height: 0; max-height: none; contain: size; }
   .cmp-ms .ms { grid-template-columns: 74px 1fr 56px; gap: 8px; }
