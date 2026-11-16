@@ -345,7 +345,8 @@
 
     // trascinamento su un svg: tocco breve senza movimento = onTap, altrimenti scorre lungo la pista.
     // pan: invece di inseguire il dito si trascina la pista stessa (la vista è sempre centrata sul pallino)
-    function scrub(svg, toIndex, onTap, pan) {
+    // startOk(p, scala): se c'è, un tocco che non lo soddisfa viene ignorato (es. sfondo lontano dalla pista)
+    function scrub(svg, toIndex, onTap, pan, startOk) {
       let down = null;
       const at = (e) => {
         const p = svg.createSVGPoint();
@@ -353,6 +354,7 @@
         return p.matrixTransform(svg.getScreenCTM().inverse());
       };
       svg.addEventListener("pointerdown", (e) => {
+        if (startOk && !startOk(at(e), svg.getScreenCTM().a || 1)) { down = null; return; }
         e.preventDefault(); // niente selezione del testo né scorrimento della pagina durante il trascinamento
         down = { x: e.clientX, y: e.clientY, moved: false, target: e.target, cx: midX(cur), cy: midY(cur), s: svg.getScreenCTM().a || 1 };
         svg.setPointerCapture(e.pointerId);
@@ -528,7 +530,14 @@
     drawMap(); drawTraj(); drawList(); drawCharts();
 
     scrub(document.getElementById("cmpMap"), (px, py) => nearest(mx, my, px, py, step * k * 0.05),
-      (t) => { if (t.dataset && t.dataset.i != null) { select(+t.dataset.i); return true; } return false; });
+      (t) => { if (t.dataset && t.dataset.i != null) { select(+t.dataset.i); return true; } return false; },
+      false,
+      // sulla mappa conta solo chi tocca vicino alla pista (entro ~28 px): lo sfondo, anche accanto alle frecce, non sposta il pallino
+      (p, s) => {
+        let b = Infinity;
+        for (let i = 0; i < n; i++) b = Math.min(b, (mx(i) - p.x) ** 2 + (my(i) - p.y) ** 2);
+        return Math.sqrt(b) * s <= 28;
+      });
     scrub(document.getElementById("cmpTraj"), (px, py) => nearest(midX, midY, px, py, step * 0.1), null, true);
     el.querySelectorAll(".cmp-traj .seg button").forEach((b) => b.addEventListener("click", () => {
       tmode = b.dataset.c;
