@@ -490,8 +490,16 @@
     // la pagina si ridisegna da sola quando arriva un giro: non perdere lo scorrimento delle piste
     const prevScroll = $app.querySelector(".tracks")?.scrollLeft || 0;
     $app.innerHTML = `
-      <div class="section-label">Piste</div>
-      <div class="tracks">${trackCards}</div>
+      <div class="tracks-head">
+        <div class="section-label">Piste</div>
+        <select id="trackPick" aria-label="Scegli la pista">${[...d.tracks].sort((a, b) => a.name.localeCompare(b.name, "it"))
+          .map((t) => `<option value="${esc(t.id)}" ${t.id === track.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
+      </div>
+      <div class="tracks-wrap">
+        <button class="tr-arrow l" data-dir="-1" aria-label="Piste precedenti">‹</button>
+        <div class="tracks">${trackCards}</div>
+        <button class="tr-arrow r" data-dir="1" aria-label="Piste successive">›</button>
+      </div>
 
       <div class="filters">
         <div class="seg" id="cls">${clsButtons}</div>
@@ -660,14 +668,29 @@
   }
 
   function bindBoard(rows, leader) {
-    $app.querySelectorAll("[data-track]").forEach((b) =>
-      b.addEventListener("click", () => {
-        state.trackId = isNaN(+b.dataset.track) ? b.dataset.track : +b.dataset.track;
-        state.selKey = null;
-        persist();
-        render();
-      })
-    );
+    const pickTrack = (id, show) => {
+      state.trackId = isNaN(+id) ? id : +id;
+      state.selKey = null;
+      persist();
+      render();
+      // scelta dalla lista: la scheda della pista viene portata in vista
+      if (show) $app.querySelector(".track-card.active")?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    };
+    $app.querySelectorAll("[data-track]").forEach((b) => b.addEventListener("click", () => pickTrack(b.dataset.track)));
+    const tp = document.getElementById("trackPick");
+    if (tp) tp.addEventListener("change", () => pickTrack(tp.value, true));
+    // frecce: scorrono di quasi una schermata di piste; spariscono quando da quella parte non c'è altro
+    const strip = $app.querySelector(".tracks");
+    if (strip) {
+      const arrows = $app.querySelectorAll(".tr-arrow");
+      const upd = () => {
+        const max = strip.scrollWidth - strip.clientWidth;
+        arrows.forEach((a) => a.classList.toggle("off", +a.dataset.dir < 0 ? strip.scrollLeft <= 2 : strip.scrollLeft >= max - 2));
+      };
+      arrows.forEach((a) => a.addEventListener("click", () => strip.scrollBy({ left: +a.dataset.dir * Math.max(220, strip.clientWidth * 0.8), behavior: "smooth" })));
+      strip.addEventListener("scroll", upd, { passive: true });
+      requestAnimationFrame(upd);
+    }
     $app.querySelectorAll("[data-cls]").forEach((b) =>
       b.addEventListener("click", () => { state.cls = b.dataset.cls; state.selKey = null; persist(); render(); })
     );
