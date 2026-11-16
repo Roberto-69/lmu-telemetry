@@ -30,6 +30,32 @@
     return "OTHER";
   }
   const clsLabel = (id) => CLASS_LABEL[id] || id;
+  // Giro "da qualifica": appena usciti dai box (gomme fresche) e con carburante o energia per pochi giri.
+  // I giri per cui bastano si calcolano da quanto si è consumato in quel giro; vale il più basso tra
+  // carburante ed energia virtuale. Sui giri delle qualifiche vere restano 1-6 giri, nei giri di passo 7 o più.
+  const QUALI_STINT = 10, QUALI_FUEL_LAPS = 6;
+  function qualiInfo(l) {
+    if (!l || l.stint_lap == null || l.stint_lap > QUALI_STINT) return null;
+    const left = (a, b) => (a > 0 && b != null && a > b ? a / (a - b) : null);
+    const v = [left(num(l.fuel_start), num(l.fuel_end)), left(num(l.ve_start), num(l.ve_end))].filter((x) => x != null);
+    if (!v.length) return null;
+    const laps = Math.min(...v);
+    return laps <= QUALI_FUEL_LAPS ? { stint: l.stint_lap, laps } : null;
+  }
+  const qualiBadge = (q) => (q ? `<span class="badge quali" title="Giro da qualifica: ${q.stint}° giro dall'uscita dai box, carburante per circa ${Math.max(1, Math.round(q.laps)) === 1 ? "1 giro" : Math.round(q.laps) + " giri"}. Non è un tempo di passo gara.">QUALI</span>` : "");
+  // v_pb non ha stint e consumo del giro: si prendono dai giri stessi
+  async function withQuali(pb) {
+    const ids = [...new Set(pb.map((p) => p.lap_id).filter((x) => x != null))];
+    if (!ids.length) return pb;
+    try {
+      const rows = [];
+      for (let i = 0; i < ids.length; i += 150) rows.push(...(await api(`v_laps?select=id,stint_lap,fuel_end,ve_end&id=in.(${ids.slice(i, i + 150).join(",")})`)));
+      const by = new Map(rows.map((x) => [x.id, x]));
+      return pb.map((p) => { const x = by.get(p.lap_id); return x ? { ...p, stint_lap: x.stint_lap, fuel_end: x.fuel_end, ve_end: x.ve_end } : p; });
+    } catch {
+      return pb; // senza questi dati niente badge, il resto funziona
+    }
+  }
   const clsBadge = (id) => `<span class="badge cls ${id}">${esc(clsLabel(id))}</span>`;
   const SESSION_IT = { practice: "Prove", qualify: "Qualifica", race: "Gara", warmup: "Warm-up", testday: "Test" };
   const GRIP_IT = ["Verde", "Bassa", "Media", "Alta", "Satura"];
@@ -146,7 +172,7 @@
           state.era ? api(`v_pb_archive?select=*&archived_by=eq.${state.era}`) : api("v_pb?select=*&is_current=is.true"),
           api("resets?select=*&order=id.desc"),
         ]);
-        return { pb, recent: await recentP, resets, legacy: false };
+        return { pb: await withQuali(pb), recent: await recentP, resets, legacy: false };
       } catch (e) {
         if (state.era) throw e;
         // database non ancora aggiornato: viste di prima, niente telemetria / archivio / reset
@@ -220,7 +246,7 @@
         pbS: [num(p.best_s1), num(p.best_s2), num(p.best_s3)],
         theo: num(p.theoretical),
         laps: p.valid_laps, last: p.last_driven,
-        era: p.era_id ?? 0, lapId: p.lap_id, hasTrace: !!p.has_trace,
+        era: p.era_id ?? 0, lapId: p.lap_id, hasTrace: !!p.has_trace, quali: qualiInfo(p),
         lap: {
           s: [num(lap.s1), num(lap.s2), num(lap.s3)],
           fuel: num(lap.fuel_start), ve: num(lap.ve_start), tyre: lap.tyre_front,
@@ -270,7 +296,7 @@
       const combos = [...new Map(fresh.filter((l) => l.valid).map((l) => [comboKey(l), l])).values()];
       if (combos.length) {
         const or = combos.map((l) => `and(driver_id.eq.${l.driver_id},track_id.eq.${l.track_id},car_id.eq.${l.car_id})`).join(",");
-        const pbs = await api(`v_pb?select=*&is_current=is.true&or=(${or})`);
+        const pbs = await withQuali(await api(`v_pb?select=*&is_current=is.true&or=(${or})`));
         const byKey = new Map(raw.pb.map((p) => [comboKey(p), p]));
         for (const p of pbs) byKey.set(comboKey(p), p);
         raw.pb = [...byKey.values()];
@@ -452,7 +478,7 @@
           <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</td>
           <td><div class="driver"><span class="cls-bar ${esc(r.cls)}"></span><div style="min-width:0">
             <div class="nick">${esc(r.nick)}${moveHtml(r, i, before)}${dot}</div><div class="car">${esc(r.car)}</div></div></div></td>
-          <td class="r"><span class="time">${fmtLap(r.best)}</span></td>
+          <td class="r">${qualiBadge(r.quali)}<span class="time">${fmtLap(r.best)}</span></td>
           <td class="r"><span class="gap">${i === 0 ? "" : fmtGap(gap)}</span></td>
           ${secs}
           <td class="r col-ideal"><span class="ideal">${fmtLap(r.theo)}</span></td>
@@ -543,7 +569,7 @@
       <div class="detail">
         <div class="d-head">
           <div><div class="nick">${esc(r.nick)}</div><div class="car">${esc(r.car)}</div></div>
-          <div class="d-time"><span class="time">${fmtLap(r.best)}</span><span class="gap">${isLeader ? "Record della pista" : fmtGap(r.best - leader.best) + " dal primo"}</span></div>
+          <div class="d-time"><span class="time">${qualiBadge(r.quali)}${fmtLap(r.best)}</span><span class="gap">${isLeader ? "Record della pista" : fmtGap(r.best - leader.best) + " dal primo"}</span></div>
         </div>
         ${detailActionsHtml(r)}
 
@@ -858,7 +884,7 @@
         }).join("");
         const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
         const wear = wearAvg(l);
-        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "");
+        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "") + (l.valid ? qualiBadge(qualiInfo(l)) : "");
         const open = state.openLap === l.id;
         const del = l.valid && state.mode === "live" ? `<a class="btn ghost sm del" href="#cancella/${enc(l.id)}">Cancella questo giro</a>` : "";
         const extra = open ? `<tr class="lap-ex"><td colspan="9"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";

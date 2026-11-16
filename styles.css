@@ -243,6 +243,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
 .badge.cls { color: #fff; border: 0; }
 .badge.pb { background: rgba(43, 213, 118, 0.14); color: var(--green); border-color: rgba(43, 213, 118, 0.35); }
 .badge.rec { background: rgba(181, 92, 255, 0.16); color: var(--purple); border-color: rgba(181, 92, 255, 0.4); }
+.badge.quali { background: rgba(255, 138, 61, 0.14); color: #ff8a3d; border-color: rgba(255, 138, 61, 0.4); margin-right: 6px; cursor: help; }
 
 /* ---------- dettaglio ---------- */
 .detail { padding: 16px; display: grid; gap: 18px; }
