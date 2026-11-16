@@ -970,9 +970,15 @@
     // altri piloti oltre al riferimento (#confronto/io/rif/altro1/altro2…), al massimo MAX_EXTRA
     const extra = [...new Set(v.more || [])].map((k) => d.byKey.get(k))
       .filter((x) => x && x.hasTrace && x.track_id === r.track_id && x.key !== r.key && x.key !== ref.key).slice(0, MAX_EXTRA);
-    let A, B, E;
+    // tutto il gruppo della stessa classe, per il giro ideale: se una telemetria non arriva si va avanti senza
+    const shown = new Set([r.key, ref.key, ...extra.map((x) => x.key)]);
+    const group = peers.filter((x) => x.cls === r.cls && !shown.has(x.key)).slice(0, 20);
+    const groupP = Promise.allSettled(group.map(getTrace));
+    const lapsP = source().laps(r).catch(() => []);
+    let A, B, E, G, myLaps;
     try {
       [A, B, ...E] = await Promise.all([getTrace(r), getTrace(ref), ...extra.map(getTrace)]);
+      [G, myLaps] = await Promise.all([groupP, lapsP]);
     } catch (e) {
       const unsupported = typeof DecompressionStream === "undefined";
       document.getElementById("cmp").innerHTML = `<div class="empty" style="padding:40px"><p>${unsupported ? "Questo browser è troppo vecchio per leggere la telemetria: aggiorna Chrome o Safari." : "Telemetria non disponibile. Controlla la connessione e riprova."}</p></div>`;
@@ -988,13 +994,40 @@
         refIsRecord: Math.abs(ref.best - classRec) < 0.0005 && ref.cls === r.cls,
         others: peers.map((p) => ({ key: p.key, label: `${p.nick} · ${p.car} · ${fmtLap(p.best)}` })),
         extra: extra.map((x, i) => ({ trace: E[i], nick: x.nick, lap: x.best, key: x.key })),
+        group: group.map((x, i) => G[i].status === "fulfilled" ? { trace: G[i].value, nick: x.nick } : null).filter(Boolean),
         maxExtra: MAX_EXTRA,
         onPickOther: (k) => go(k, extra.map((x) => x.key).filter((x) => x !== k)),
         onSetExtra: (keys) => go(ref.key, keys),
       });
+    const cons = document.createElement("div");
+    cons.className = "panel cmp-cons";
+    cons.innerHTML = consistency(myLaps);
+    document.getElementById("cmp").appendChild(cons);
     function go(refKey, keys) {
       location.hash = `#confronto/${[r.key, refKey, ...keys].map(enc).join("/")}`;
     }
+  }
+
+  // Costanza: sui giri validi di questa combinazione (gli ultimi 40) quanto si resta lontani dal proprio
+  // migliore in ogni settore. Tanta perdita media = tempo perso per errori, non per mancanza di velocità.
+  function consistency(laps) {
+    const ok = (laps || []).filter((l) => l.valid && !l.pit_lap && num(l.lap_time) > 0 && num(l.s1) > 0 && num(l.s2) > 0 && num(l.s3) > 0).slice(0, 40);
+    const head = `<div class="panel-head"><h2>Costanza</h2><span class="hint">tuoi ultimi ${ok.length} giri validi</span></div>`;
+    if (ok.length < 3) return head + `<div class="cons-note">Servono almeno 3 giri validi con i tempi dei settori.</div>`;
+    const rows = [["Giro", (l) => num(l.lap_time)], ["Settore 1", (l) => num(l.s1)], ["Settore 2", (l) => num(l.s2)], ["Settore 3", (l) => num(l.s3)]].map(([name, f]) => {
+      const v = ok.map(f).sort((a, b) => a - b);
+      const best = v[0], mean = v.reduce((a, b) => a + b, 0) / v.length;
+      const sd = Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / v.length);
+      const med = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+      return { name, best, med, sd, loss: mean - best };
+    });
+    const sec = rows.slice(1), worst = sec.reduce((w, x) => (x.loss > w.loss ? x : w), sec[0]);
+    const near = ok.filter((l) => num(l.lap_time) - rows[0].best <= 0.5).length;
+    const t = (x) => (x >= 60 ? fmtLap(x) : x.toFixed(3));
+    return head + `<div class="cc-wrap"><table class="cc"><thead><tr><th></th><th>Migliore</th><th>Mediana</th><th title="Deviazione standard: quanto cambiano i tempi da un giro all'altro">Variabilità</th><th class="cc-t">Persi in media</th></tr></thead><tbody>${
+      rows.map((x) => `<tr class="${x === worst ? "on" : ""}"><td class="cc-n">${x.name}</td><td><b>${t(x.best)}</b></td><td>${t(x.med)}</td><td>±${x.sd.toFixed(3)}</td><td class="cc-t" style="color:var(--red)">+${x.loss.toFixed(3)}</td></tr>`).join("")
+    }</tbody></table></div>
+      <div class="cons-note">Dove perdi di più tra un giro e l'altro: <b>${worst.name.toLowerCase()}</b> (+${worst.loss.toFixed(3)} s di media rispetto al tuo migliore). Giri entro mezzo secondo dal tuo migliore: <b>${near} su ${ok.length}</b>.</div>`;
   }
 
   function renderReset() {

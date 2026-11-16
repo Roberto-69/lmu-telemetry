@@ -430,6 +430,28 @@ select, .reset input {
 .ms-bar::before { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line-2); }
 .ms-bar i { position: absolute; top: 0; height: 8px; border-radius: 4px; }
 .ms-v { font-family: var(--mono); font-size: 12px; text-align: right; }
+.cmp-num.on { fill: var(--text); font-size: 13px; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.ms-n { display: flex; flex-direction: column; }
+.ms-n > span { overflow: hidden; text-overflow: ellipsis; }
+.ms-who { font-weight: 400; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.ms-ideal { padding: 0 14px 6px; font-size: 12px; color: var(--muted); }
+.ms-ideal b { color: var(--text); font-family: var(--mono); }
+.ms-ideal span { font-family: var(--mono); }
+#msMode button { padding: 3px 8px; font-size: 11px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-corners, .cmp-cons { margin-top: 12px; }
+.cc-wrap { overflow-x: auto; padding: 0 6px 8px; }
+.cc { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cc th { text-align: left; font-size: 11px; color: var(--faint); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; white-space: nowrap; }
+.cc td { padding: 7px 8px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.cc td b { color: var(--text); font-weight: 700; }
+.cc td small { margin-left: 6px; font-size: 11px; color: var(--muted); }
+.cc tr[data-i] { cursor: pointer; }
+.cc tr[data-i]:hover td, .cc tr.on td { background: var(--surface-2); }
+.cc .cc-n { font-family: var(--sans); font-weight: 700; color: var(--text); font-size: 13px; }
+.cc .cc-t { text-align: right; }
+.cc .cc-none { color: var(--faint); font-family: var(--sans); }
+.cons-note { padding: 0 14px 12px; font-size: 13px; color: var(--muted); }
+.cons-note b { color: var(--text); }
 .cmp-readout { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 12px 0 8px; min-height: 18px; }
 .cmp-charts { padding: 12px; }
 .cmp-charts .sub-label { margin: 10px 0 4px; }

@@ -36,22 +36,59 @@
   }
 
   // ---------------------------------------------------------------- microsettori
-  // Curve trovate sul giro di riferimento: minimi di velocità con una frenata vera prima.
+  // Curve trovate sul giro di riferimento, due tipi:
+  //  - frenate: minimo di velocità nei 150 m attorno, con almeno 20 km/h persi nei 400 m prima;
+  //  - curve veloci (si alza solo il piede o si tiene giù): minimo nei 60 m attorno, almeno 8 km/h persi,
+  //    poi la velocità risale di almeno 5 km/h e lì si sta sterzando davvero.
+  // Due curve a meno di 150 m diventano una sola (la più lenta).
   // Ogni microsettore va dal punto più veloce prima della curva a quello prima della curva dopo.
   function microsectors(ref, n) {
     const v = ref.speed;
-    const W = Math.max(1, Math.round(150 / ref.step));      // curve distanti almeno 150 m
-    const back = Math.max(1, Math.round(400 / ref.step));   // la frenata si cerca nei 400 m prima
-    const mins = [];
+    const W = Math.max(1, Math.round(150 / ref.step));
+    const W2 = Math.max(1, Math.round(60 / ref.step));
+    const back = Math.max(1, Math.round(400 / ref.step));
+    const lowest = (i, w) => {
+      for (let j = Math.max(0, i - w); j <= Math.min(n - 1, i + w); j++) if (v[j] < v[i] || (v[j] === v[i] && j < i)) return false;
+      return true;
+    };
+    const found = [];
     for (let i = 1; i < n - 1; i++) {
-      let isMin = true;
-      for (let j = Math.max(0, i - W); j <= Math.min(n - 1, i + W); j++) {
-        if (v[j] < v[i] || (v[j] === v[i] && j < i)) { isMin = false; break; }
-      }
-      if (!isMin) continue;
+      if (!lowest(i, W2)) continue;
       let pre = 0;
       for (let j = Math.max(0, i - back); j < i; j++) pre = Math.max(pre, v[j]);
-      if (pre - v[i] >= 20) mins.push(i);
+      const drop = pre - v[i];
+      if (drop >= 20 && lowest(i, W)) { found.push(i); continue; }
+      if (drop < 8) continue;
+      let up = 0;
+      for (let j = i + 1; j < Math.min(n, i + back) && v[j] >= v[i]; j++) up = Math.max(up, v[j] - v[i]);
+      let st = 0;
+      for (let j = Math.max(0, i - 4); j <= Math.min(n - 1, i + 4); j++) st = Math.max(st, Math.abs(ref.steer[j]));
+      if (up >= 5 && st > 0.04) found.push(i);
+    }
+    // curve in pieno (niente calo di velocità): la traiettoria gira di almeno 40° in 200 m.
+    // Si guarda la forma della pista e non lo sterzo, che cambia da un'auto all'altra.
+    const H = Math.max(2, Math.round(100 / ref.step));
+    const hd = (i) => Math.atan2(ref.z[i + 1] - ref.z[i], ref.x[i + 1] - ref.x[i]);
+    const T = new Float64Array(n);
+    for (let i = H; i < n - 1 - H; i++) {
+      let t = hd(i + H) - hd(i - H);
+      while (t > Math.PI) t -= 2 * Math.PI;
+      while (t < -Math.PI) t += 2 * Math.PI;
+      T[i] = Math.abs(t);
+    }
+    const MINT = (40 * Math.PI) / 180;
+    for (let i = H; i < n - 1 - H; i++) {
+      if (T[i] < MINT || found.some((f) => Math.abs(f - i) * ref.step < 150)) continue;
+      let top = true;
+      for (let j = Math.max(0, i - W); j <= Math.min(n - 1, i + W); j++) if (T[j] > T[i] || (T[j] === T[i] && j < i)) { top = false; break; }
+      if (top) found.push(i);
+    }
+    found.sort((a, b) => a - b);
+    const mins = [];
+    for (const i of found) {
+      const last = mins[mins.length - 1];
+      if (last != null && (i - last) * ref.step < 150) { if (v[i] < v[last]) mins[mins.length - 1] = i; continue; }
+      mins.push(i);
     }
     if (mins.length < 2) {
       const k = 10, out = [];
@@ -73,7 +110,7 @@
   // Le posizioni sono state misurate sui giri veri del gruppo (apice delle curve trovate da microsectors).
   // Una curva trovata prende il nome della curva reale più vicina entro NAME_TOL metri; le altre restano "Curva N".
   const NAME_TOL = 200;
-  const SPA = { len: 6982, c: [[280, "La Source"], [1270, "Raidillon"], [2385, "Les Combes"], [2560, "Malmedy"], [2955, "Rivage"], [3160, "Bruxelles"], [3720, "Pouhon"], [4390, "Fagnes"], [4560, "Campus"], [4830, "Stavelot"], [6690, "Bus Stop"]] };
+  const SPA = { len: 6982, c: [[280, "La Source"], [1270, "Raidillon"], [2385, "Les Combes"], [2560, "Malmedy"], [2955, "Rivage"], [3160, "Bruxelles"], [3720, "Pouhon"], [4390, "Fagnes"], [4560, "Campus"], [4830, "Stavelot"], [6075, "Blanchimont"], [6690, "Bus Stop"]] };
   const CORNERS = {
     "Autodromo Nazionale Monza": { len: 5781, c: [[975, "Rettifilo"], [2150, "Roggia"], [2555, "Lesmo 1"], [2885, "Lesmo 2"], [3955, "Ascari"], [5195, "Parabolica"]] },
     "Monza Curva Grande Circuit": { len: 5745, c: [[2125, "Roggia"], [2505, "Lesmo 1"], [2845, "Lesmo 2"], [3910, "Ascari"], [5145, "Parabolica"]] },
@@ -81,7 +118,8 @@
     "Circuit de Spa-Francorchamps": SPA,
     "Circuit de Spa-Francorchamps Endurance": SPA,
     "Circuit de la Sarthe": { len: 13624, c: [[845, "Dunlop"], [1480, "Esses"], [1925, "Tertre Rouge"], [4115, "Playstation"], [6090, "Michelin"], [7740, "Mulsanne"], [9855, "Indianapolis"], [10170, "Arnage"], [11560, "Porsche"], [12245, "Corvette"], [12430, "Maison Blanche"], [13450, "Ford"]] },
-    "Bahrain International Circuit": { len: 5387, c: [[745, "Curva 1"], [1530, "Curva 4"], [1895, "Curve 5-7"], [2250, "Curva 8"], [2720, "Curva 10"], [3450, "Curva 11"], [4110, "Curva 13"], [4920, "Curva 14"]] },
+    // Bahrain non ha nomi storici: le curve si chiamano col numero ufficiale (Curva 1 … Curva 15)
+    "Bahrain International Circuit": { len: 5387, c: [[745, "Curva 1"], [1530, "Curva 4"], [1900, "Curve 5-7"], [2250, "Curva 8"], [2720, "Curve 9-10"], [3450, "Curva 11"], [3835, "Curva 12"], [4110, "Curva 13"], [4915, "Curve 14-15"]] },
     "Daytona International Speedway Road Course": { len: 5734, c: [[460, "Curva 1"], [960, "Int. Horseshoe"], [1770, "Curva 5"], [2155, "West Horseshoe"], [3935, "Bus Stop"]] },
     "Michelin Raceway Road Atlanta": { len: 4084, c: [[465, "Curva 1"], [850, "Esses"], [1420, "Curva 6"], [2155, "Curva 7"], [3530, "Chicane 10"]] },
     "Silverstone National Circuit": { len: 2634, c: [[375, "Copse"], [1050, "Becketts"], [2130, "Luffield"]] },
@@ -91,13 +129,17 @@
   function nameCorners(MS, track, step, n) {
     const t = CORNERS[track];
     if (!t || Math.abs(n * step - t.len) > t.len * 0.03) return;
-    const used = new Set();
-    for (const m of MS) {
-      if (m.apex == null) continue;
-      const d = m.apex * step;
-      let best = null;
-      for (const c of t.c) if (!used.has(c) && Math.abs(c[0] - d) <= NAME_TOL && (!best || Math.abs(c[0] - d) < Math.abs(best[0] - d))) best = c;
-      if (best) { used.add(best); m.real = best[1]; }
+    // si abbinano prima le coppie più vicine: una curva in più trovata poco prima non ruba il nome a quella giusta
+    const pairs = [];
+    MS.forEach((m) => {
+      if (m.apex == null) return;
+      for (const c of t.c) { const d = Math.abs(c[0] - m.apex * step); if (d <= NAME_TOL) pairs.push([d, m, c]); }
+    });
+    pairs.sort((x, y) => x[0] - y[0]);
+    const usedM = new Set(), usedC = new Set();
+    for (const [, m, c] of pairs) {
+      if (usedM.has(m) || usedC.has(c)) continue;
+      usedM.add(m); usedC.add(c); m.real = c[1];
     }
   }
 
@@ -135,6 +177,24 @@
     MS.forEach((m) => (m.g = D[m.b] - D[m.a]));
     nameCorners(MS, opts.track, step, n);
     const gap = me.lap - ref.lap;
+
+    // migliori del gruppo: per ogni microsettore il più veloce tra tutti i giri con la telemetria (stessa classe).
+    // Giro ideale = riferimento + quanto si guadagna in ogni microsettore prendendo il migliore.
+    const pool = [
+      { T: A, nick: me.nick }, { T: B, nick: ref.nick },
+      ...extra.map((e) => ({ T: e.trace, nick: e.nick })),
+      ...(opts.group || []).map((g) => ({ T: g.trace, nick: g.nick })),
+    ].filter((p) => p.T && p.T.n >= n);
+    const seg = (T, m) => T.t[m.b] - T.t[m.a];
+    let ideal = ref.lap;
+    MS.forEach((m) => {
+      let best = Infinity, who = "";
+      for (const p of pool) { const t = seg(p.T, m); if (t < best - 1e-9) { best = t; who = p.nick; } }
+      m.gb = seg(A, m) - best; m.who = who;
+      ideal += best - seg(B, m);
+    });
+    let gm = "ref"; // microsettori confrontati col riferimento ("ref") o col migliore del gruppo ("best")
+    const gv = (m) => (gm === "ref" ? m.g : m.gb);
 
     // mappa (vista dall'alto: x a destra, z verso l'alto)
     let mnx = Infinity, mxx = -Infinity, mnz = Infinity, mxz = -Infinity;
@@ -191,12 +251,18 @@
           <div class="traj-leg" id="trajLeg"></div>
         </div>
         <div class="panel cmp-ms">
-          <div class="panel-head"><h2>Microsettori</h2><span class="hint">tocca per ingrandire</span></div>
+          <div class="panel-head"><h2>Microsettori</h2>
+            <span class="seg" id="msMode"><button data-m="ref" class="on" title="Distacco dal riferimento">vs ${esc(ref.nick)}</button><button data-m="best" title="Distacco dal più veloce del gruppo in ogni microsettore">vs migliori</button></span></div>
+          <div class="ms-ideal" title="Somma dei microsettori più veloci tra ${pool.length} giri con la telemetria">Giro ideale del gruppo <b>${fmt(ideal)}</b> · tu <span style="color:${col(me.lap - ideal)}">${sign(me.lap - ideal)}${Math.abs(me.lap - ideal).toFixed(3)}</span></div>
           <div id="cmpList"></div>
         </div>
       </div>
       <div class="cmp-readout" id="cmpRead">Passa sul grafico o trascina il pallino sulla pista per leggere i valori</div>
       <div class="panel cmp-charts" id="cmpCharts"></div>
+      <div class="panel cmp-corners">
+        <div class="panel-head"><h2>Curva per curva</h2><span class="hint">tu / ${esc(ref.nick)} · tocca una riga per ingrandirla</span></div>
+        <div class="cc-wrap" id="cmpCorners"></div>
+      </div>
       <div class="cmp-legend"><span><i class="sw me"></i>${esc(me.nick)}</span><span><i class="sw ref"></i>${esc(ref.nick)}</span>${xLeg()}<span><i class="sq" style="background:var(--green)"></i>guadagni</span><span><i class="sq" style="background:var(--red)"></i>perdi</span></div>`;
 
     const pick = document.getElementById("cmpOther");
@@ -222,11 +288,13 @@
     function drawMap() {
       let s = `<polyline points="${pts(0, n - 1)}" fill="none" stroke="var(--line-2)" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>`;
       MS.forEach((m, i) => {
-        s += `<polyline data-i="${i}" points="${pts(m.a, m.b)}" fill="none" stroke="${col(m.g)}" stroke-width="${sel === i ? 6 : 4}" stroke-linejoin="round" stroke-linecap="round" opacity="${sel === null || sel === i ? 1 : 0.3}" style="cursor:pointer"/>`;
+        s += `<polyline data-i="${i}" points="${pts(m.a, m.b)}" fill="none" stroke="${col(gv(m))}" stroke-width="${sel === i ? 6 : 4}" stroke-linejoin="round" stroke-linecap="round" opacity="${sel === null || sel === i ? 1 : 0.3}" style="cursor:pointer"><title>${esc(m.real || m.name)}</title></polyline>`;
       });
       MS.forEach((m, i) => {
         if (m.apex == null) return;
-        s += `<text x="${(mx(m.apex) + 9).toFixed(1)}" y="${(my(m.apex) - 7).toFixed(1)}" class="cmp-num">${i + 1}</text>`;
+        // sulla curva scelta compare anche il nome vero
+        const lbl = sel === i && m.real ? `${i + 1} · ${esc(m.real)}` : `${i + 1}`;
+        s += `<text x="${(mx(m.apex) + 9).toFixed(1)}" y="${(my(m.apex) - 7).toFixed(1)}" class="cmp-num${sel === i ? " on" : ""}">${lbl}</text>`;
       });
       // traguardo di traverso alla pista
       const fa = (Math.atan2(my(Math.min(3, n - 1)) - my(0), mx(Math.min(3, n - 1)) - mx(0)) * 180) / Math.PI;
@@ -394,17 +462,56 @@
     }
 
     function drawList() {
-      const mxg = Math.max(0.001, ...MS.map((m) => Math.abs(m.g)));
+      const mxg = Math.max(0.001, ...MS.map((m) => Math.abs(gv(m))));
       const order = [...MS.keys()];
       document.getElementById("cmpList").innerHTML = order.map((i) => {
         const m = MS[i];
-        const w = (Math.abs(m.g) / mxg) * 50;
+        const g = gv(m), w = (Math.abs(g) / mxg) * 50;
+        const who = gm === "best" ? `<small class="ms-who">${m.gb < 0.0005 ? "★ sei tu il migliore" : "★ " + esc(m.who)}</small>` : "";
         return `<button class="ms ${sel === i ? "on" : ""}" data-i="${i}">
-          <span class="ms-n" title="${esc(m.real || m.name)}">${m.real ? `<i class="ms-k">${i + 1}</i>${esc(m.real)}` : esc(m.name)}</span>
-          <span class="ms-bar"><i style="background:${col(m.g)};${m.g > 0 ? "left:50%" : "right:50%"};width:${w}%"></i></span>
-          <span class="ms-v" style="color:${col(m.g)}">${sign(m.g)}${Math.abs(m.g).toFixed(3)}</span></button>`;
+          <span class="ms-n" title="${esc(m.real || m.name)}"><span>${m.real ? `<i class="ms-k">${i + 1}</i>${esc(m.real)}` : esc(m.name)}</span>${who}</span>
+          <span class="ms-bar"><i style="background:${col(g)};${g > 0 ? "left:50%" : "right:50%"};width:${w}%"></i></span>
+          <span class="ms-v" style="color:${col(g)}">${sign(g)}${Math.abs(g).toFixed(3)}</span></button>`;
       }).join("");
       document.querySelectorAll("#cmpList .ms").forEach((b) => b.addEventListener("click", () => select(+b.dataset.i)));
+    }
+
+    // per ogni curva: dove si frena (metri prima dell'apice), velocità minima, velocità 100 m dopo l'apice
+    const W2 = Math.max(1, Math.round(60 / step)), EXIT = Math.round(100 / step);
+    function cornerStats(T, m) {
+      let bp = null;
+      for (let i = m.a; i <= m.apex; i++) if (T.brk[i] > 0.1) { bp = (m.apex - i) * step; break; }
+      let vmin = Infinity;
+      for (let i = Math.max(0, m.apex - W2); i <= Math.min(n - 1, m.apex + W2); i++) vmin = Math.min(vmin, T.speed[i]);
+      return { bp, vmin, vout: T.speed[Math.min(m.b, m.apex + EXIT, n - 1)] };
+    }
+    function drawCorners() {
+      const box = document.getElementById("cmpCorners");
+      if (!box) return;
+      const kmh = (a, b) => {
+        const d = a - b, c = Math.abs(d) < 0.5 ? "var(--faint)" : d > 0 ? "var(--green)" : "var(--red)";
+        return `<b>${Math.round(a)}</b> / ${Math.round(b)}<small style="color:${c}">${Math.abs(d) < 0.5 ? "=" : (d > 0 ? "+" : "−") + Math.round(Math.abs(d))}</small>`;
+      };
+      const brake = (a, b) => {
+        if (a == null && b == null) return `<span class="cc-none">senza freno</span>`;
+        const t = (v) => (v == null ? "—" : Math.round(v) + " m");
+        let d = "";
+        if (a != null && b != null && Math.abs(a - b) >= 3) d = `<small>${Math.round(Math.abs(a - b))} m ${a < b ? "dopo" : "prima"}</small>`;
+        return `<b>${t(a)}</b> / ${t(b)}${d}`;
+      };
+      const rows = MS.map((m, i) => {
+        if (m.apex == null) return "";
+        const a = cornerStats(A, m), b = cornerStats(B, m);
+        return `<tr class="${sel === i ? "on" : ""}" data-i="${i}">
+          <td class="cc-n"><i class="ms-k">${i + 1}</i>${esc(m.real || m.name)}</td>
+          <td>${brake(a.bp, b.bp)}</td><td>${kmh(a.vmin, b.vmin)}</td><td>${kmh(a.vout, b.vout)}</td>
+          <td class="cc-t" style="color:${col(m.g)}">${sign(m.g)}${Math.abs(m.g).toFixed(3)}</td></tr>`;
+      }).join("");
+      box.innerHTML = `<table class="cc"><thead><tr><th>Curva</th><th title="Dove inizia la frenata, in metri prima dell'apice">Frenata</th><th>Minima km/h</th><th title="Velocità 100 m dopo l'apice">Uscita km/h</th><th class="cc-t">Tempo</th></tr></thead><tbody>${rows}</tbody></table>`;
+      box.querySelectorAll("tr[data-i]").forEach((tr) => tr.addEventListener("click", () => {
+        select(+tr.dataset.i);
+        el.querySelector(".cmp-top").scrollIntoView({ behavior: "smooth", block: "start" });
+      }));
     }
 
     let W = 1000;
@@ -497,7 +604,7 @@
     function hover(i, src = "chart") {
       if (i == null) return;
       cur = i;
-      if (sel !== null && (i < r0 || i > r1)) { sel = null; r0 = 0; r1 = n - 1; drawMap(); drawList(); drawCharts(); }
+      if (sel !== null && (i < r0 || i > r1)) { sel = null; r0 = 0; r1 = n - 1; drawMap(); drawList(); drawCorners(); drawCharts(); }
       document.querySelectorAll("#cmpCharts .cur").forEach((l) => {
         const xx = X(i);
         l.setAttribute("x1", xx); l.setAttribute("x2", xx);
@@ -520,14 +627,19 @@
         cur = m.apex ?? Math.round((m.a + m.b) / 2);
         fitRange(m.a, m.b);
       }
-      drawMap(); drawList(); drawCharts();
+      drawMap(); drawList(); drawCorners(); drawCharts();
     }
 
     // partenza: la curva dove si perde di più, già ingrandita
     const worst = MS.reduce((w, m) => (m.g > w.g ? m : w), MS[0]);
     cur = worst.apex ?? Math.round((worst.a + worst.b) / 2);
     fitRange(Math.max(0, cur - Math.round(120 / step)), Math.min(n - 1, cur + Math.round(120 / step)));
-    drawMap(); drawTraj(); drawList(); drawCharts();
+    drawMap(); drawTraj(); drawList(); drawCorners(); drawCharts();
+    el.querySelectorAll("#msMode button").forEach((b) => b.addEventListener("click", () => {
+      gm = b.dataset.m;
+      el.querySelectorAll("#msMode button").forEach((x) => x.classList.toggle("on", x === b));
+      drawMap(); drawList();
+    }));
 
     scrub(document.getElementById("cmpMap"), (px, py) => nearest(mx, my, px, py, step * k * 0.05),
       (t) => { if (t.dataset && t.dataset.i != null) { select(+t.dataset.i); return true; } return false; },
