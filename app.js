@@ -42,14 +42,17 @@
     const laps = Math.min(...v);
     return laps <= QUALI_FUEL_LAPS ? { stint: l.stint_lap, laps } : null;
   }
+  const licoBadge = (l) => (l && l.kind === "lico"
+    ? `<span class="badge lico" title="Lift and coast: consumo sotto il normale e piede alzato più del solito${l.coast_s != null ? ` (${num(l.coast_s).toFixed(1)} s nel giro)` : ""}">LICO</span>` : "");
   const qualiBadge = (q) => (!q ? "" : q.session
     ? `<span class="badge quali" title="Giro fatto in qualifica. Non è un tempo di passo gara.">QUALI</span>`
     : `<span class="badge quali" title="Giro da qualifica: ${q.stint}° giro dall'uscita dai box, carburante per circa ${Math.max(1, Math.round(q.laps)) === 1 ? "1 giro" : Math.round(q.laps) + " giri"}. Non è un tempo di passo gara.">QUALI</span>`);
   // Tipo del giro, come la colonna "kind" del database (006_passo_qualifica.sql): in qualifica = qualifica,
   // in gara = passo, in prova decide qualiInfo. Se il database lo manda già si usa quello.
-  const KINDS = { pace: "Passo", quali: "Qualifica" };
+  // "lico" (lift and coast) lo decide solo il database (007_lico_telemetria_giornata.sql).
+  const KINDS = { pace: "Passo", quali: "Qualifica", lico: "Lico" };
   function kindOf(l) {
-    if (l.kind === "pace" || l.kind === "quali") return l.kind;
+    if (KINDS[l.kind]) return l.kind;
     if (l.session_type === "qualify") return "quali";
     if (l.session_type === "race") return "pace";
     return qualiInfo(l) ? "quali" : "pace";
@@ -91,6 +94,7 @@
     history: new Map(),
     laps: new Map(),     // tutti i giri per chiave pilota|pista|auto
     traces: new Map(),   // telemetria decodificata per chiave
+    lapRows: new Map(),  // giri singoli aperti in telemetria (#confronto/giro:<id>)
     view: null,          // { type: "giri" | "confronto" | "reset", key, ref }
     era: null,           // id del reset da cui vedere l'archivio (null = classifica attuale)
     validOnly: false,
@@ -151,7 +155,7 @@
   }
   const comboKey = (x) => `${x.driver_id}|${x.track_id}|${x.car_id}`;
   // Chiave di una riga di classifica: il passo tiene la chiave di prima (link e posizioni salvate restano validi)
-  const rowKey = (x) => comboKey(x) + (kindOf(x) === "quali" ? "|Q" : "");
+  const rowKey = (x) => comboKey(x) + ({ quali: "|Q", lico: "|L" }[kindOf(x)] || "");
   const enc = encodeURIComponent;
 
   // Stessa logica delle viste SQL, per la demo
@@ -550,7 +554,7 @@
               <th class="r col-ideal">Ideale</th><th class="r col-laps">Giri</th><th class="r col-when">Quando</th>
             </tr></thead>
             <tbody>${body}</tbody>
-          </table></div>` : `<div class="empty" style="padding:40px">Nessun giro ${state.kind === "quali" ? "da qualifica" : "di passo"}${state.cls === "all" ? "" : " in questa classe"} su questa pista.</div>`}
+          </table></div>` : `<div class="empty" style="padding:40px">Nessun giro ${{ quali: "da qualifica", lico: "in lift and coast" }[state.kind] || "di passo"}${state.cls === "all" ? "" : " in questa classe"} su questa pista.</div>`}
         </div>
         <div class="panel" id="detail">${renderDetailHtml(rows, leader)}</div>
       </div>`;
@@ -570,6 +574,7 @@
     const tip = {
       pace: "Giri di prova e di gara con il carburante normale",
       quali: "Giri in qualifica, e giri di prova appena usciti dai box con carburante per 6 giri o meno",
+      lico: "Lift and coast: giri con consumo sotto il normale e più piede alzato del solito (tracker aggiornato)",
     };
     return `<div class="seg kind" id="kind">${Object.entries(KINDS).map(([k, label]) =>
       `<button data-kind="${k}" class="${state.kind === k ? "active" : ""}" title="${tip[k]}">${label} <span class="n">${count(k)}</span></button>`).join("")}</div>`;
@@ -610,7 +615,7 @@
       <div class="detail">
         <div class="d-head">
           <div><div class="nick">${esc(r.nick)}</div><div class="car">${esc(r.car)}</div></div>
-          <div class="d-time"><span class="time">${qualiBadge(r.quali)}${fmtLap(r.best)}</span><span class="gap">${isLeader ? "Record della pista" : fmtGap(r.best - leader.best) + " dal primo"}</span></div>
+          <div class="d-time"><span class="time">${qualiBadge(r.quali)}${r.kind === "lico" ? licoBadge({ kind: "lico" }) : ""}${fmtLap(r.best)}</span><span class="gap">${isLeader ? "Record della pista" : fmtGap(r.best - leader.best) + " dal primo"}</span></div>
         </div>
         ${detailActionsHtml(r)}
 
@@ -820,7 +825,7 @@
       x.laps += r.laps || 0;
       if (r.last > x.last) x.last = r.last;
     }
-    // Record di pista per classe vinti (passo e qualifica contano ognuno come un record)
+    // Record di pista per classe vinti (passo, qualifica e lico contano ognuno come un record)
     const rec = new Map();
     for (const r of d.rows) {
       const k = `${r.track_id}|${r.cls}|${r.kind}`;
@@ -849,7 +854,7 @@
             </div>
           </div>`;
       }).join("");
-    $app.innerHTML = `<div class="section-label">Piloti del gruppo · ordinati per record di pista (per classe, passo e qualifica)</div><div class="drivers">${cards}</div>`;
+    $app.innerHTML = `<div class="section-label">Piloti del gruppo · ordinati per record di pista (per classe, passo, qualifica e lico)</div><div class="drivers">${cards}</div>`;
   }
 
   // ---------------------------------------------------------------- pagine (#giri, #confronto, #reset)
@@ -867,6 +872,7 @@
     state.history.clear();
     state.laps.clear();
     state.traces.clear();
+    state.lapRows.clear();
   }
 
   function eraSelectHtml() {
@@ -948,10 +954,11 @@
         }).join("");
         const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
         const wear = wearAvg(l);
-        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "") + (l.valid ? qualiBadge(lapQuali(l)) : "");
+        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "") + (l.valid ? qualiBadge(lapQuali(l)) + licoBadge(l) : "") + (l.has_trace ? `<span class="badge tel" title="Telemetria disponibile: tocca il giro">TEL</span>` : "");
         const open = state.openLap === l.id;
         const del = l.valid && state.mode === "live" ? `<a class="btn ghost sm del" href="#cancella/${enc(l.id)}">Cancella questo giro</a>` : "";
-        const extra = open ? `<tr class="lap-ex"><td colspan="9"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";
+        const tel = l.has_trace ? `<a class="btn sm" href="#confronto/${enc("giro:" + l.id)}">Telemetria del giro</a>` : "";
+        const extra = open ? `<tr class="lap-ex"><td colspan="9"><div class="chips">${lapChips(l)}${tel}${del}</div></td></tr>` : "";
         return `<tr class="lap-row ${l.valid ? "" : "inv"} ${open ? "open" : ""}" data-lap="${esc(l.id)}">
             <td><span class="lap-n">${l.lap_no ?? "—"}</span>${tags}</td>
             <td class="r"><span class="time ${tc}">${fmtLap(l.lap_time)}</span></td>
@@ -986,7 +993,7 @@
         <button class="btn ghost sm" id="lapsPdf">Esporta PDF</button>
       </div>
       ${groups || `<div class="empty" style="padding:40px"><p>Nessun giro da mostrare.</p></div>`}
-      <p class="foot-note">I giri si azzerano il giorno 1 di ogni mese; il giro migliore resta per sempre.</p>`;
+      <p class="foot-note">I giri si azzerano il giorno 1 di ogni mese; il giro migliore resta per sempre. La telemetria dei giri (TEL) resta fino alle 10 del mattino dopo, quella dei giri migliori per sempre.</p>`;
 
     document.getElementById("validOnly").addEventListener("change", (e) => { state.validOnly = e.target.checked; renderLaps(); });
     // PDF: la finestra di stampa del browser ("Salva come PDF"), con un foglio di stile chiaro (@media print).
@@ -1029,6 +1036,7 @@
       l.ve_start ? `<span class="chip">Energia <b>${pct(num(l.ve_start))} → ${pct(num(l.ve_end))}</b>${used(l.ve_start, l.ve_end, (a, b) => ` (−${((a - b) * 100).toFixed(1)}%)`) || ""}</span>` : "",
       w && `<span class="chip">Usura gomme <b>AS ${fmtWear(w[0])} · AD ${fmtWear(w[1])} · PS ${fmtWear(w[2])} · PD ${fmtWear(w[3])}</b></span>`,
       l.stint_lap != null && `<span class="chip">Giro stint <b>${l.stint_lap}</b></span>`,
+      l.coast_s != null && `<span class="chip" title="Secondi con gas e freno a zero sopra i 72 km/h">Piede alzato <b>${num(l.coast_s).toFixed(1)} s</b></span>`,
       (l.tc != null || l.abs != null) && `<span class="chip">TC <b>${l.tc ?? "—"}</b> ABS <b>${l.abs ?? "—"}</b></span>`,
       l.track_temp != null && `<span class="chip">Pista <b>${Math.round(l.track_temp)}°C</b> Aria <b>${l.air_temp != null ? Math.round(l.air_temp) : "—"}°C</b></span>`,
       l.grip_level != null && `<span class="chip">Grip <b>${GRIP_IT[l.grip_level] ?? l.grip_level}</b></span>`,
@@ -1042,19 +1050,44 @@
     return t;
   }
 
+  // Un giro qualsiasi con la sua telemetria (giri di oggi): diventa una "riga" come quelle della classifica.
+  // Il riferimento proposto è il giro migliore dello stesso pilota, stesso tipo.
+  async function lapRow(id) {
+    if (state.lapRows.has(id)) return state.lapRows.get(id);
+    let l = null;
+    for (const list of state.laps.values()) l = l || list.find((x) => String(x.id) === String(id));
+    if (!l && state.mode === "demo") l = (demoLaps || []).find((x) => String(x.id) === String(id));
+    if (!l && state.mode !== "demo") l = (await api(`v_laps?select=*&id=eq.${enc(id)}`))[0];
+    if (!l) return null;
+    const best = state.data.byKey.get(rowKey(l));
+    const row = {
+      key: "giro:" + l.id, nick: `${l.nick} · giro ${l.lap_no ?? ""}`.trim(), driver_id: l.driver_id,
+      track_id: l.track_id, track: l.track_display || l.track, car_id: l.car_id, car: l.car, cls: clsId(l.car_class),
+      best: num(l.lap_time), lapId: l.id, hasTrace: !!l.has_trace, kind: kindOf(l), era: l.era_id ?? 0,
+      lap: { length: num(l.length_m) }, own: best && best.lapId !== l.id && best.hasTrace ? best : null,
+    };
+    state.lapRows.set(id, row);
+    return row;
+  }
+
   const MAX_EXTRA = 4;
   async function renderCompare() {
     const v = state.view;
     const d = state.data;
-    const r = d.byKey.get(v.key);
+    let r = d.byKey.get(v.key);
+    if (!r && String(v.key).startsWith("giro:")) {
+      $app.innerHTML = viewHead("Telemetria del giro") + `<div class="loading"><div class="spinner"></div>Carico il giro…</div>`;
+      try { r = await lapRow(v.key.slice(5)); } catch { r = null; }
+      if (state.view !== v) return;
+    }
     if (!r) return renderMissing();
     // si confronta solo con lo stesso tipo di giro (passo con passo, qualifica con qualifica)
     const peers = d.rows.filter((x) => x.track_id === r.track_id && x.kind === r.kind && x.hasTrace && x.key !== r.key).sort((a, b) => a.best - b.best);
     const classRec = Math.min(...d.rows.filter((x) => x.track_id === r.track_id && x.kind === r.kind && x.cls === r.cls).map((x) => x.best));
-    const ref = (v.ref && d.byKey.get(v.ref)) || peers.find((x) => x.cls === r.cls) || peers[0];
+    const ref = (v.ref && d.byKey.get(v.ref)) || r.own || peers.find((x) => x.cls === r.cls) || peers[0];
     const head = viewHead(`Telemetria · ${esc(r.nick)}${ref ? " vs " + esc(ref.nick) : ""}`, `${esc(r.track)} · ${esc(r.car)}${ref && ref.car !== r.car ? " / " + esc(ref.car) : ""}`);
     if (!r.hasTrace || !ref) {
-      $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${!r.hasTrace ? "Per questo giro migliore non c'è la telemetria: arriva con il prossimo record personale fatto con il tracker aggiornato." : "Nessun altro pilota ha la telemetria su questa pista."}</p></div>`;
+      $app.innerHTML = head + `<div class="empty" style="padding:40px"><p>${!r.hasTrace ? (r.own !== undefined ? "La telemetria di questo giro non c'è più: si tiene fino alle 10 del mattino dopo." : "Per questo giro migliore non c'è la telemetria: arriva con il prossimo record personale fatto con il tracker aggiornato.") : "Nessun altro giro con la telemetria su questa pista con cui confrontarlo."}</p></div>`;
       return;
     }
     $app.innerHTML = head + `<div id="cmp"><div class="loading"><div class="spinner"></div>Carico la telemetria…</div></div>`;
@@ -1083,7 +1116,7 @@
         refKey: ref.key,
         track: r.track,
         refIsRecord: Math.abs(ref.best - classRec) < 0.0005 && ref.cls === r.cls,
-        others: peers.map((p) => ({ key: p.key, label: `${p.nick} · ${p.car} · ${fmtLap(p.best)}` })),
+        others: (r.own && !peers.includes(r.own) ? [r.own, ...peers] : peers).map((p) => ({ key: p.key, label: `${p.nick}${p === r.own ? " (suo migliore)" : ""} · ${p.car} · ${fmtLap(p.best)}` })),
         extra: extra.map((x, i) => ({ trace: E[i], nick: x.nick, lap: x.best, key: x.key })),
         group: group.map((x, i) => G[i].status === "fulfilled" ? { trace: G[i].value, nick: x.nick } : null).filter(Boolean),
         maxExtra: MAX_EXTRA,

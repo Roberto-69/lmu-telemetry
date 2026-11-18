@@ -84,8 +84,10 @@
             const tyre = TYRES[Math.floor(r() * TYRES.length)];
             for (let n = 1; n <= laps_n; n++) {
               const pit = n === 1;
+              // ultimi giri delle sessioni di prova "di mezzo": lift and coast (più lenti, più piede alzato)
+              const lico = s % 3 === 1 && n >= laps_n - 2;
               const noise = (r() - 0.35) * 0.012 + (r() < 0.1 ? r() * 0.02 : 0);
-              const lt = t.base * c.k * (1 + d.skill + learning + noise + (pit ? 0.06 : 0));
+              const lt = t.base * c.k * (1 + d.skill + learning + noise + (pit ? 0.06 : 0) + (lico ? 0.006 : 0));
               const sn = t.split.map((p) => p * (1 + (r() - 0.5) * 0.012));
               const sum = sn.reduce((a, b) => a + b, 0);
               const s1 = (lt * sn[0]) / sum;
@@ -124,6 +126,9 @@
                 track_temp: temp,
                 grip_level: Math.min(4, 1 + Math.floor(n / 4)),
                 driven_at: new Date(sessionStart + n * lt * 1000).toISOString(),
+                ...(lico && !pit && !invalid ? { kind: "lico" } : {}),
+                coast_s: pit ? null : Math.round((lico ? 8 + (n % 3) : 2 + (n % 4) * 0.6) * 10) / 10,
+                has_trace: !pit && s === sessions - 1,   // telemetria dei giri dell'ultima sessione
               });
               fuel = Math.max(2, fuel - t.len / 1000 * 0.38);
               if (ve) ve = Math.max(0.02, ve - t.len / 1000 * 0.0105);
