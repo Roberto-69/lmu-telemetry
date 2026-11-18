@@ -222,6 +222,13 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px clamp(16px, 4vw, 40px) 4
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .panel-head h2 { margin: 0; font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; }
 .panel-head .hint { color: var(--faint); font-size: 12px; }
+/* classifica passo / qualifica, accanto al titolo */
+.ph-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.seg.kind { border-radius: 9px; padding: 2px; background: var(--bg, transparent); }
+.seg.kind button { padding: 4px 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 6px; }
+.seg.kind button.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+.seg.kind button[data-kind="quali"].active { color: #ff8a3d; box-shadow: inset 0 0 0 1px rgba(255, 138, 61, 0.45); }
+.seg.kind .n { font-size: 11px; opacity: 0.6; font-variant-numeric: tabular-nums; }
 
 /* ---------- classifica ---------- */
 .board { width: 100%; border-collapse: collapse; }

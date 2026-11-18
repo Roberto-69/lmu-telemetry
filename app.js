@@ -42,7 +42,20 @@
     const laps = Math.min(...v);
     return laps <= QUALI_FUEL_LAPS ? { stint: l.stint_lap, laps } : null;
   }
-  const qualiBadge = (q) => (q ? `<span class="badge quali" title="Giro da qualifica: ${q.stint}° giro dall'uscita dai box, carburante per circa ${Math.max(1, Math.round(q.laps)) === 1 ? "1 giro" : Math.round(q.laps) + " giri"}. Non è un tempo di passo gara.">QUALI</span>` : "");
+  const qualiBadge = (q) => (!q ? "" : q.session
+    ? `<span class="badge quali" title="Giro fatto in qualifica. Non è un tempo di passo gara.">QUALI</span>`
+    : `<span class="badge quali" title="Giro da qualifica: ${q.stint}° giro dall'uscita dai box, carburante per circa ${Math.max(1, Math.round(q.laps)) === 1 ? "1 giro" : Math.round(q.laps) + " giri"}. Non è un tempo di passo gara.">QUALI</span>`);
+  // Tipo del giro, come la colonna "kind" del database (006_passo_qualifica.sql): in qualifica = qualifica,
+  // in gara = passo, in prova decide qualiInfo. Se il database lo manda già si usa quello.
+  const KINDS = { pace: "Passo", quali: "Qualifica" };
+  function kindOf(l) {
+    if (l.kind === "pace" || l.kind === "quali") return l.kind;
+    if (l.session_type === "qualify") return "quali";
+    if (l.session_type === "race") return "pace";
+    return qualiInfo(l) ? "quali" : "pace";
+  }
+  // Badge QUALI di un giro: con i dettagli di carburante se ci sono
+  const lapQuali = (l) => (kindOf(l) !== "quali" ? null : qualiInfo(l) || { session: true });
   // v_pb non ha stint e consumo del giro: si prendono dai giri stessi
   async function withQuali(pb) {
     const ids = [...new Set(pb.map((p) => p.lap_id).filter((x) => x != null))];
@@ -68,6 +81,7 @@
     tab: saved.tab || "board",
     trackId: saved.trackId ?? null,
     cls: CLASS_LABEL[saved.cls] ? saved.cls : "all",
+    kind: KINDS[saved.kind] ? saved.kind : "pace",   // classifica passo o qualifica
     perDriver: saved.perDriver ?? true,
     selKey: null,
     data: null,
@@ -85,7 +99,7 @@
 
   function persist() {
     try {
-      localStorage.setItem("lmu-ui", JSON.stringify({ tab: state.tab, trackId: state.trackId, cls: state.cls, perDriver: state.perDriver }));
+      localStorage.setItem("lmu-ui", JSON.stringify({ tab: state.tab, trackId: state.trackId, cls: state.cls, kind: state.kind, perDriver: state.perDriver }));
     } catch { /* non importa */ }
   }
 
@@ -136,6 +150,8 @@
     return res.json();
   }
   const comboKey = (x) => `${x.driver_id}|${x.track_id}|${x.car_id}`;
+  // Chiave di una riga di classifica: il passo tiene la chiave di prima (link e posizioni salvate restano validi)
+  const rowKey = (x) => comboKey(x) + (kindOf(x) === "quali" ? "|Q" : "");
   const enc = encodeURIComponent;
 
   // Stessa logica delle viste SQL, per la demo
@@ -143,7 +159,7 @@
     const groups = new Map();
     for (const l of laps) {
       if (!l.valid) continue;
-      const k = `${l.driver_id}|${l.track_id}|${l.car_id}`;
+      const k = rowKey(l);
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(l);
     }
@@ -157,7 +173,7 @@
         best_lap: b.lap_time, best_s1: s[0], best_s2: s[1], best_s3: s[2],
         theoretical: Math.round((s[0] + s[1] + s[2]) * 1000) / 1000,
         valid_laps: list.length, last_driven: list.reduce((a, x) => (x.driven_at > a ? x.driven_at : a), ""),
-        lap_id: b.id, has_trace: true, era_id: 0, is_current: true,
+        lap_id: b.id, has_trace: true, era_id: 0, is_current: true, kind: kindOf(b),
       });
     }
     const recent = [...laps].sort((a, b) => (a.driven_at < b.driven_at ? 1 : -1)).slice(0, 400);
@@ -180,13 +196,14 @@
         const bm = new Map(best.map((b) => [comboKey(b), b]));
         const merged = pb.map((p) => {
           const b = bm.get(comboKey(p)) || {};
-          return { ...b, ...p, lap_id: b.id, has_trace: false, era_id: 0 };
+          return { ...b, ...p, lap_id: b.id, has_trace: false, era_id: 0, kind: "pace" };
         });
         return { pb: merged, recent: await recentP, resets: [], legacy: true };
       }
     },
     history(r) {
-      return api(`v_laps?select=lap_time,driven_at,valid&driver_id=eq.${r.driver_id}&track_id=eq.${r.track_id}&car_id=eq.${r.car_id}&valid=is.true&order=driven_at.asc&limit=1000`);
+      const kind = state.data.legacy ? "" : `&kind=eq.${r.kind}`;
+      return api(`v_laps?select=lap_time,driven_at,valid&driver_id=eq.${r.driver_id}&track_id=eq.${r.track_id}&car_id=eq.${r.car_id}${kind}&valid=is.true&order=driven_at.asc&limit=1000`);
     },
     laps(r) {
       const era = state.data.legacy ? "" : `&era_id=eq.${r.era}`;
@@ -213,7 +230,7 @@
     },
     async history(r) {
       return demoLaps
-        .filter((l) => l.valid && l.driver_id === r.driver_id && l.track_id === r.track_id && l.car_id === r.car_id)
+        .filter((l) => l.valid && l.driver_id === r.driver_id && l.track_id === r.track_id && l.car_id === r.car_id && kindOf(l) === r.kind)
         .sort((a, b) => (a.driven_at < b.driven_at ? -1 : 1));
     },
     async laps(r) {
@@ -235,7 +252,8 @@
 
   function build({ pb, recent, resets, legacy }) {
     const rows = pb.map((p) => {
-      const key = comboKey(p);
+      const key = rowKey(p);
+      const kind = kindOf(p);
       const lap = p;
       return {
         key,
@@ -246,7 +264,8 @@
         pbS: [num(p.best_s1), num(p.best_s2), num(p.best_s3)],
         theo: num(p.theoretical),
         laps: p.valid_laps, last: p.last_driven,
-        era: p.era_id ?? 0, lapId: p.lap_id, hasTrace: !!p.has_trace, quali: qualiInfo(p),
+        era: p.era_id ?? 0, lapId: p.lap_id, hasTrace: !!p.has_trace, kind,
+        quali: kind === "quali" ? qualiInfo(p) || { session: true } : null,
         lap: {
           s: [num(lap.s1), num(lap.s2), num(lap.s3)],
           fuel: num(lap.fuel_start), ve: num(lap.ve_start), tyre: lap.tyre_front,
@@ -297,8 +316,8 @@
       if (combos.length) {
         const or = combos.map((l) => `and(driver_id.eq.${l.driver_id},track_id.eq.${l.track_id},car_id.eq.${l.car_id})`).join(",");
         const pbs = await withQuali(await api(`v_pb?select=*&is_current=is.true&or=(${or})`));
-        const byKey = new Map(raw.pb.map((p) => [comboKey(p), p]));
-        for (const p of pbs) byKey.set(comboKey(p), p);
+        const byKey = new Map(raw.pb.map((p) => [rowKey(p), p]));
+        for (const p of pbs) byKey.set(rowKey(p), p);
         raw.pb = [...byKey.values()];
       }
       raw.recent = [...fresh.reverse(), ...raw.recent].slice(0, 400);
@@ -382,7 +401,7 @@
   function basePositions(track) {
     const base = state.base.best;
     let rows = track.rows
-      .filter((r) => (state.cls === "all" || r.cls === state.cls) && base[r.key] != null)
+      .filter((r) => r.kind === state.kind && (state.cls === "all" || r.cls === state.cls) && base[r.key] != null)
       .map((r) => ({ id: state.perDriver ? r.driver_id : r.key, best: base[r.key] }));
     if (state.perDriver) {
       const by = new Map();
@@ -408,7 +427,7 @@
 
   // ---------------------------------------------------------------- classifica
   function boardRows(track) {
-    let rows = track.rows.filter((r) => state.cls === "all" || r.cls === state.cls);
+    let rows = track.rows.filter((r) => r.kind === state.kind && (state.cls === "all" || r.cls === state.cls));
     if (state.perDriver) {
       const byDriver = new Map();
       for (const r of rows) {
@@ -440,7 +459,7 @@
     const liveHere = [...live.values()].filter((l) => l.track_id === track.id);
 
     const trackCards = d.tracks.map((t) => {
-      const tr = t.rows.filter((r) => state.cls === "all" || r.cls === state.cls);
+      const tr = t.rows.filter((r) => r.kind === state.kind && (state.cls === "all" || r.cls === state.cls));
       const rec = tr.reduce((a, r) => (!a || r.best < a.best ? r : a), null);
       const drivers = new Set(t.rows.map((r) => r.driver_id)).size;
       const nOn = [...live.values()].filter((l) => l.track_id === t.id).length;
@@ -478,7 +497,7 @@
           <td class="pos ${i < 3 ? "p" + (i + 1) : ""}">${i + 1}</td>
           <td><div class="driver"><span class="cls-bar ${esc(r.cls)}"></span><div style="min-width:0">
             <div class="nick">${esc(r.nick)}${moveHtml(r, i, before)}${dot}</div><div class="car">${esc(r.car)}</div></div></div></td>
-          <td class="r">${qualiBadge(r.quali)}<span class="time">${fmtLap(r.best)}</span></td>
+          <td class="r"><span class="time">${fmtLap(r.best)}</span></td>
           <td class="r"><span class="gap">${i === 0 ? "" : fmtGap(gap)}</span></td>
           ${secs}
           <td class="r col-ideal"><span class="ideal">${fmtLap(r.theo)}</span></td>
@@ -521,7 +540,7 @@
 
       <div class="grid">
         <div class="panel">
-          <div class="panel-head"><h2>Classifica</h2><span class="hint"><span class="sec purple">viola</span> = settore migliore · <span class="sec green">verde</span> = record personale${state.base ? ` · <span class="move up">▲</span><span class="move down" style="margin-left:2px">▼</span> = posizioni dalla tua visita precedente` : ""}</span></div>
+          <div class="panel-head"><div class="ph-left"><h2>Classifica</h2>${kindSegHtml(track)}</div><span class="hint"><span class="sec purple">viola</span> = settore migliore · <span class="sec green">verde</span> = record personale${state.base ? ` · <span class="move up">▲</span><span class="move down" style="margin-left:2px">▼</span> = posizioni dalla tua visita precedente` : ""}</span></div>
           ${rows.length ? `
           <div style="overflow-x:auto">
           <table class="board">
@@ -531,7 +550,7 @@
               <th class="r col-ideal">Ideale</th><th class="r col-laps">Giri</th><th class="r col-when">Quando</th>
             </tr></thead>
             <tbody>${body}</tbody>
-          </table></div>` : `<div class="empty" style="padding:40px">Nessun tempo in questa classe.</div>`}
+          </table></div>` : `<div class="empty" style="padding:40px">Nessun giro ${state.kind === "quali" ? "da qualifica" : "di passo"}${state.cls === "all" ? "" : " in questa classe"} su questa pista.</div>`}
         </div>
         <div class="panel" id="detail">${renderDetailHtml(rows, leader)}</div>
       </div>`;
@@ -540,6 +559,20 @@
     if ($tracks) $tracks.scrollLeft = prevScroll;
     bindBoard(rows, leader);
     loadHistory();
+  }
+
+  // Scelta tra classifica passo e qualifica, con quanti sono in ciascuna (con i filtri attuali)
+  function kindSegHtml(track) {
+    const count = (k) => {
+      const rows = track.rows.filter((r) => r.kind === k && (state.cls === "all" || r.cls === state.cls));
+      return state.perDriver ? new Set(rows.map((r) => r.driver_id)).size : rows.length;
+    };
+    const tip = {
+      pace: "Giri di prova e di gara con il carburante normale",
+      quali: "Giri in qualifica, e giri di prova appena usciti dai box con carburante per 6 giri o meno",
+    };
+    return `<div class="seg kind" id="kind">${Object.entries(KINDS).map(([k, label]) =>
+      `<button data-kind="${k}" class="${state.kind === k ? "active" : ""}" title="${tip[k]}">${label} <span class="n">${count(k)}</span></button>`).join("")}</div>`;
   }
 
   function renderDetailHtml(rows, leader) {
@@ -694,6 +727,9 @@
     $app.querySelectorAll("[data-cls]").forEach((b) =>
       b.addEventListener("click", () => { state.cls = b.dataset.cls; state.selKey = null; persist(); render(); })
     );
+    $app.querySelectorAll("[data-kind]").forEach((b) =>
+      b.addEventListener("click", () => { state.kind = b.dataset.kind; state.selKey = null; persist(); render(); })
+    );
     const pd = document.getElementById("perDriver");
     if (pd) pd.addEventListener("change", () => { state.perDriver = pd.checked; persist(); render(); });
     const era = document.getElementById("era");
@@ -720,7 +756,12 @@
     const d = state.data;
     if (!d.recent.length) return renderEmpty();
     // Record personali e record della pista (per classe) per i badge
-    const pbBest = new Map(d.rows.map((r) => [r.key, r.best]));
+    // (passo o qualifica: vale il migliore dei due, la sessione può contenere giri di tutti e due i tipi)
+    const pbBest = new Map();
+    for (const r of d.rows) {
+      const k = comboKey(r);
+      if (!pbBest.has(k) || r.best < pbBest.get(k)) pbBest.set(k, r.best);
+    }
     const trackRec = new Map();
     for (const r of d.rows) {
       const k = `${r.track_id}|${r.cls}`;
@@ -779,10 +820,10 @@
       x.laps += r.laps || 0;
       if (r.last > x.last) x.last = r.last;
     }
-    // Record di pista per classe vinti
+    // Record di pista per classe vinti (passo e qualifica contano ognuno come un record)
     const rec = new Map();
     for (const r of d.rows) {
-      const k = `${r.track_id}|${r.cls}`;
+      const k = `${r.track_id}|${r.cls}|${r.kind}`;
       if (!rec.has(k) || r.best < rec.get(k).best) rec.set(k, r);
     }
     const recCount = new Map();
@@ -808,7 +849,7 @@
             </div>
           </div>`;
       }).join("");
-    $app.innerHTML = `<div class="section-label">Piloti del gruppo · ordinati per record di pista (per classe)</div><div class="drivers">${cards}</div>`;
+    $app.innerHTML = `<div class="section-label">Piloti del gruppo · ordinati per record di pista (per classe, passo e qualifica)</div><div class="drivers">${cards}</div>`;
   }
 
   // ---------------------------------------------------------------- pagine (#giri, #confronto, #reset)
@@ -841,7 +882,7 @@
   function detailActionsHtml(r) {
     const d = state.data;
     if (d.legacy) return "";
-    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.hasTrace && x.key !== r.key);
+    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.kind === r.kind && x.hasTrace && x.key !== r.key);
     const lapsBtn = state.era ? "" : `<a class="btn ghost sm" href="#giri/${enc(r.key)}">Tutti i giri</a>`;
     let tel;
     if (!r.hasTrace) tel = `<span class="d-note">Telemetria: arriva con il prossimo record personale</span>`;
@@ -866,7 +907,7 @@
   async function renderLaps() {
     const r = state.data.byKey.get(state.view.key);
     if (!r) return renderMissing();
-    const head = viewHead(`${esc(r.nick)} · tutti i giri`, `${esc(r.track)} · ${esc(r.car)} ${clsBadge(r.cls)}`);
+    const head = viewHead(`${esc(r.nick)} · tutti i giri`, `${esc(r.track)} · ${esc(r.car)} ${clsBadge(r.cls)} · migliore ${KINDS[r.kind].toLowerCase()} ${fmtLap(r.best)}`);
     let laps = state.laps.get(r.key);
     if (!laps) {
       $app.innerHTML = head + `<div class="loading"><div class="spinner"></div>Carico i giri…</div>`;
@@ -907,7 +948,7 @@
         }).join("");
         const used = l.fuel_start != null && l.fuel_end != null ? Math.max(0, l.fuel_start - l.fuel_end) : null;
         const wear = wearAvg(l);
-        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "") + (l.valid ? qualiBadge(qualiInfo(l)) : "");
+        const tags = (l.pit_lap ? `<span class="badge">BOX</span>` : "") + (!l.valid && !l.pit_lap ? `<span class="badge bad">NON VALIDO</span>` : "") + (isPb ? `<span class="badge rec">MIGLIORE</span>` : "") + (l.valid ? qualiBadge(lapQuali(l)) : "");
         const open = state.openLap === l.id;
         const del = l.valid && state.mode === "live" ? `<a class="btn ghost sm del" href="#cancella/${enc(l.id)}">Cancella questo giro</a>` : "";
         const extra = open ? `<tr class="lap-ex"><td colspan="9"><div class="chips">${lapChips(l)}${del}</div></td></tr>` : "";
@@ -1007,8 +1048,9 @@
     const d = state.data;
     const r = d.byKey.get(v.key);
     if (!r) return renderMissing();
-    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.hasTrace && x.key !== r.key).sort((a, b) => a.best - b.best);
-    const classRec = Math.min(...d.rows.filter((x) => x.track_id === r.track_id && x.cls === r.cls).map((x) => x.best));
+    // si confronta solo con lo stesso tipo di giro (passo con passo, qualifica con qualifica)
+    const peers = d.rows.filter((x) => x.track_id === r.track_id && x.kind === r.kind && x.hasTrace && x.key !== r.key).sort((a, b) => a.best - b.best);
+    const classRec = Math.min(...d.rows.filter((x) => x.track_id === r.track_id && x.kind === r.kind && x.cls === r.cls).map((x) => x.best));
     const ref = (v.ref && d.byKey.get(v.ref)) || peers.find((x) => x.cls === r.cls) || peers[0];
     const head = viewHead(`Telemetria · ${esc(r.nick)}${ref ? " vs " + esc(ref.nick) : ""}`, `${esc(r.track)} · ${esc(r.car)}${ref && ref.car !== r.car ? " / " + esc(ref.car) : ""}`);
     if (!r.hasTrace || !ref) {
@@ -1018,7 +1060,7 @@
     $app.innerHTML = head + `<div id="cmp"><div class="loading"><div class="spinner"></div>Carico la telemetria…</div></div>`;
     // altri piloti oltre al riferimento (#confronto/io/rif/altro1/altro2…), al massimo MAX_EXTRA
     const extra = [...new Set(v.more || [])].map((k) => d.byKey.get(k))
-      .filter((x) => x && x.hasTrace && x.track_id === r.track_id && x.key !== r.key && x.key !== ref.key).slice(0, MAX_EXTRA);
+      .filter((x) => x && x.hasTrace && x.track_id === r.track_id && x.kind === r.kind && x.key !== r.key && x.key !== ref.key).slice(0, MAX_EXTRA);
     // tutto il gruppo della stessa classe, per il giro ideale: se una telemetria non arriva si va avanti senza
     const shown = new Set([r.key, ref.key, ...extra.map((x) => x.key)]);
     const group = peers.filter((x) => x.cls === r.cls && !shown.has(x.key)).slice(0, 20);
